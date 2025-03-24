@@ -2,7 +2,7 @@
 
 A proof-of-concept iOS application that demonstrates face liveness detection using the device's front-facing TrueDepth camera capabilities. The app distinguishes between real human faces and spoof attempts such as photos, videos, or 3D masks.
 
-![App Screenshot Placeholder](app_screenshot.png)
+![App Screenshot Placeholder](app_screenshot.jpeg)
 
 ## Features
 
