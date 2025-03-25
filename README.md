@@ -28,34 +28,42 @@ The application follows a clean architecture with the following key components:
    - Main SwiftUI interface that coordinates the user experience
    - Manages test cycle timing and user feedback
    - Coordinates between UI and camera/detection systems
+   - Provides real-time feedback during face detection process
+   - Handles test state management and result display
 
 2. **CameraManager.swift**
    - Handles camera setup, permissions, and configuration
    - Manages AVCaptureSession and camera inputs/outputs
    - Processes both regular video and depth data streams
    - Performs preliminary depth analysis for liveness detection
+   - Coordinates between FaceDetector and UI components
 
 3. **FaceDetector.swift**
    - Uses Apple's Vision framework for face detection
-   - Provides liveness verification interface
-   - Would integrate with ML Kit or similar in a production version
+   - Implements sophisticated depth-based liveness verification
+   - Performs statistical analysis on depth data
+   - Includes specialized 3D mask detection algorithms
+   - Maintains temporal consistency checks
 
 4. **CameraPreview.swift**
    - Bridge between SwiftUI and AVCaptureVideoPreviewLayer
    - Manages display of camera feed in the UI
+   - Handles orientation changes and view lifecycle
+   - Provides smooth camera preview performance
 
 ### Detection Process
 
 The face liveness detection process works as follows:
 
 1. The user initiates a test by tapping the "Start Liveness Test" button
-2. The app starts a 5-second countdown timer
+2. The app starts a 5-second countdown timer with 0.1-second precision
 3. During the test, the TrueDepth camera captures both regular video and depth data
 4. The FaceDetector processes video frames to detect the presence of a face
 5. The CameraManager analyzes depth data to determine if the face is three-dimensional
-6. If a real face is detected before the timer expires, the test passes
-7. If a face is detected but fails liveness checks, the test fails as a spoof
-8. If no face is detected before the timer expires, the test times out
+6. Real-time feedback is provided to guide the user for optimal face positioning
+7. If a real face is detected before the timer expires, the test passes
+8. If a face is detected but fails liveness checks, the test fails as a spoof
+9. If no face is detected before the timer expires, the test times out
 
 ### Liveness Detection Approach
 

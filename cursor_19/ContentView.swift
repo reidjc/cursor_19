@@ -11,12 +11,25 @@ import SwiftUI
  * ContentView - Main user interface for the Face Liveness Detection application
  *
  * This view manages the camera preview display and user interactions for the face liveness testing process.
- * It displays the camera feed, timer, test results, and control buttons.
+ * It displays the camera feed, timer, test results, and control buttons. The view also provides real-time
+ * feedback to guide users during the face detection process.
+ *
+ * Key features:
+ * - Real-time camera preview with face detection feedback
+ * - Precise 5-second countdown timer with 0.1-second updates
+ * - Dynamic user guidance for optimal face positioning
+ * - Clear visual feedback for test results
+ * - Automatic test completion on successful liveness detection
  *
  * The liveness test follows this process:
- * 1. User taps the "Start Liveness Test" button to begin a 5-second test
- * 2. During the test, the app analyzes camera frames to detect faces and assess liveness
- * 3. Once complete, results are displayed (success, failure, or timeout)
+ * 1. User taps the "Start Liveness Test" button to begin
+ * 2. A 5-second countdown timer starts with 0.1-second precision
+ * 3. The app continuously monitors for face detection and liveness
+ * 4. Real-time feedback guides the user for optimal face positioning
+ * 5. Test completes with one of three results:
+ *    - Success: A real, live face was detected
+ *    - Failure: A face was detected but determined to be a spoof
+ *    - Timeout: No face was detected within the time limit
  */
 struct ContentView: View {
     // MARK: - Properties

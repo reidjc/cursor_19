@@ -5,28 +5,35 @@ import Vision
 /**
  * FaceDetector - Handles face detection and liveness verification
  *
- * This class provides face detection functionality using Apple's Vision framework
- * and implements a depth-based liveness detection system using the TrueDepth camera.
- * It analyzes video frames to detect faces and uses depth data analysis to distinguish
- * between real 3D faces and spoof attempts including photos, screens, and 3D masks.
+ * This class provides sophisticated face detection and liveness verification using Apple's Vision framework
+ * and the TrueDepth camera. It implements a multi-layered approach to distinguish between real 3D faces
+ * and various spoof attempts including photos, screens, and 3D masks.
  *
- * The liveness detection works by:
- * 1. Sampling multiple points across the face region in a 10x10 grid pattern
- * 2. Analyzing depth variations to identify characteristics of flat surfaces
- * 3. Using statistical analysis (standard deviation and range) to detect photos
- * 4. Analyzing micro-movements and patterns to detect 3D masks
- * 5. Requiring sufficient depth variation to confirm a real 3D face
+ * Key features:
+ * - Real-time face detection using Vision framework
+ * - Advanced depth data analysis with 10x10 grid sampling
+ * - Statistical analysis for spoof detection
+ * - Temporal consistency checking
+ * - Specialized 3D mask detection
+ * - Gradient pattern analysis
  *
- * The algorithm considers a face to be "live" if it passes at least 6 out of 9 checks:
- * - Depth variation is sufficient (stdDev >= 0.15 and range >= 0.3)
- * - Mean depth is within realistic range (0.2-3.0m)
- * - Edge variation is natural (edgeStdDev >= 0.15)
- * - Depth profile shows natural variation (stdDev >= 0.2 or range >= 0.4)
- * - Center region shows face-like depth variation (centerStdDev >= 0.1)
- * - Depth distribution is non-linear (natural face variation)
- * - Gradient patterns are natural (gradientStdDev >= 0.005 and gradientMean <= 0.2)
- * - Temporal changes are consistent (depth changes between 0.005-1.0m)
- * - No mask characteristics detected (micro-movements, symmetry, patterns)
+ * The liveness detection system:
+ * 1. Samples 100 points across the face region in a 10x10 grid pattern
+ * 2. Performs multiple statistical analyses on depth data
+ * 3. Tracks temporal changes for consistency
+ * 4. Analyzes gradient patterns for mask detection
+ * 5. Uses adaptive thresholds for reliable detection
+ *
+ * The algorithm requires passing at least 6 out of 9 security checks:
+ * 1. Depth variation check (stdDev >= 0.15 and range >= 0.3)
+ * 2. Realistic depth range check (0.2-3.0m)
+ * 3. Natural edge variation check (edgeStdDev >= 0.15)
+ * 4. Depth profile variation check (stdDev >= 0.2 or range >= 0.4)
+ * 5. Center region depth check (centerStdDev >= 0.1)
+ * 6. Non-linear depth distribution check
+ * 7. Natural gradient pattern check (gradientStdDev >= 0.005 and gradientMean <= 0.2)
+ * 8. Temporal consistency check (depth changes 0.005-1.0m)
+ * 9. 3D mask characteristic check
  */
 class FaceDetector {
     // MARK: - Private Properties
