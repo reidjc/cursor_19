@@ -9,10 +9,11 @@ import UIKit
  * This struct captures all relevant data points for a single liveness test,
  * which can be used for debugging false positive/negative results.
  */
-struct TestResultData: Identifiable {
-    let id = UUID()
-    let timestamp = Date()
+struct TestResultData: Identifiable, Encodable {
+    let id: UUID
+    let timestamp: Date
     let isLive: Bool
+    let testId: UUID  // Unique ID for each test session
     
     // Depth data statistics
     let depthMean: Float
@@ -45,10 +46,119 @@ struct TestResultData: Identifiable {
     
     // Test metadata
     let numPassedChecks: Int
+    let requiredChecks: Int
     let depthSampleCount: Int
+    let isStillFaceDetected: Bool
     
     // Environmental
     let deviceOrientation: UIDeviceOrientation
+    
+    // Initialize with all properties
+    init(
+        isLive: Bool,
+        depthMean: Float,
+        depthStdDev: Float,
+        depthRange: Float,
+        edgeMean: Float,
+        edgeStdDev: Float,
+        centerMean: Float,
+        centerStdDev: Float,
+        gradientMean: Float,
+        gradientStdDev: Float,
+        isTooFlat: Bool,
+        isUnrealisticDepth: Bool,
+        hasSharpEdges: Bool,
+        isTooUniform: Bool,
+        hasNaturalCenterVariation: Bool,
+        isLinearDistribution: Bool,
+        hasUnnaturalGradients: Bool,
+        hasInconsistentTemporalChanges: Bool,
+        hasMaskCharacteristics: Bool,
+        hasUnnaturalMicroMovements: Bool,
+        hasUnnaturalSymmetry: Bool,
+        hasUnnaturalTemporalPatterns: Bool,
+        numPassedChecks: Int,
+        requiredChecks: Int,
+        depthSampleCount: Int,
+        isStillFaceDetected: Bool,
+        deviceOrientation: UIDeviceOrientation,
+        timestamp: Date = Date(),
+        id: UUID = UUID(),
+        testId: UUID
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.isLive = isLive
+        self.depthMean = depthMean
+        self.depthStdDev = depthStdDev
+        self.depthRange = depthRange
+        self.edgeMean = edgeMean
+        self.edgeStdDev = edgeStdDev
+        self.centerMean = centerMean
+        self.centerStdDev = centerStdDev
+        self.gradientMean = gradientMean
+        self.gradientStdDev = gradientStdDev
+        self.isTooFlat = isTooFlat
+        self.isUnrealisticDepth = isUnrealisticDepth
+        self.hasSharpEdges = hasSharpEdges
+        self.isTooUniform = isTooUniform
+        self.hasNaturalCenterVariation = hasNaturalCenterVariation
+        self.isLinearDistribution = isLinearDistribution
+        self.hasUnnaturalGradients = hasUnnaturalGradients
+        self.hasInconsistentTemporalChanges = hasInconsistentTemporalChanges
+        self.hasMaskCharacteristics = hasMaskCharacteristics
+        self.hasUnnaturalMicroMovements = hasUnnaturalMicroMovements
+        self.hasUnnaturalSymmetry = hasUnnaturalSymmetry
+        self.hasUnnaturalTemporalPatterns = hasUnnaturalTemporalPatterns
+        self.numPassedChecks = numPassedChecks
+        self.requiredChecks = requiredChecks
+        self.depthSampleCount = depthSampleCount
+        self.isStillFaceDetected = isStillFaceDetected
+        self.deviceOrientation = deviceOrientation
+        self.testId = testId
+    }
+    
+    // CodingKeys and encode to handle UIDeviceOrientation (which is not Encodable)
+    enum CodingKeys: String, CodingKey {
+        case id, timestamp, isLive, depthMean, depthStdDev, depthRange, edgeMean, edgeStdDev
+        case centerMean, centerStdDev, gradientMean, gradientStdDev, isTooFlat, isUnrealisticDepth
+        case hasSharpEdges, isTooUniform, hasNaturalCenterVariation, isLinearDistribution
+        case hasUnnaturalGradients, hasInconsistentTemporalChanges, hasMaskCharacteristics
+        case hasUnnaturalMicroMovements, hasUnnaturalSymmetry, hasUnnaturalTemporalPatterns
+        case numPassedChecks, depthSampleCount, deviceOrientation, testId
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(isLive, forKey: .isLive)
+        try container.encode(depthMean, forKey: .depthMean)
+        try container.encode(depthStdDev, forKey: .depthStdDev)
+        try container.encode(depthRange, forKey: .depthRange)
+        try container.encode(edgeMean, forKey: .edgeMean)
+        try container.encode(edgeStdDev, forKey: .edgeStdDev)
+        try container.encode(centerMean, forKey: .centerMean)
+        try container.encode(centerStdDev, forKey: .centerStdDev)
+        try container.encode(gradientMean, forKey: .gradientMean)
+        try container.encode(gradientStdDev, forKey: .gradientStdDev)
+        try container.encode(isTooFlat, forKey: .isTooFlat)
+        try container.encode(isUnrealisticDepth, forKey: .isUnrealisticDepth)
+        try container.encode(hasSharpEdges, forKey: .hasSharpEdges)
+        try container.encode(isTooUniform, forKey: .isTooUniform)
+        try container.encode(hasNaturalCenterVariation, forKey: .hasNaturalCenterVariation)
+        try container.encode(isLinearDistribution, forKey: .isLinearDistribution)
+        try container.encode(hasUnnaturalGradients, forKey: .hasUnnaturalGradients)
+        try container.encode(hasInconsistentTemporalChanges, forKey: .hasInconsistentTemporalChanges)
+        try container.encode(hasMaskCharacteristics, forKey: .hasMaskCharacteristics)
+        try container.encode(hasUnnaturalMicroMovements, forKey: .hasUnnaturalMicroMovements)
+        try container.encode(hasUnnaturalSymmetry, forKey: .hasUnnaturalSymmetry)
+        try container.encode(hasUnnaturalTemporalPatterns, forKey: .hasUnnaturalTemporalPatterns)
+        try container.encode(numPassedChecks, forKey: .numPassedChecks)
+        try container.encode(depthSampleCount, forKey: .depthSampleCount)
+        try container.encode(Int(deviceOrientation.rawValue), forKey: .deviceOrientation)
+        try container.encode(testId, forKey: .testId)
+    }
 }
 
 /**
@@ -101,9 +211,64 @@ class FaceDetector {
     
     // MARK: - Test Results Storage
     
-    /// Stores the most recent test results for analysis
-    private(set) var testResults: [TestResultData] = []
-    private let maxStoredResults = 20
+    /// Maximum number of test results to store in app memory
+    private let maxStoredResults: Int = 20
+    
+    /// Stored test results for analysis and debugging
+    private var testResults: [TestResultData] = []
+    
+    /// Key for persisting test results in UserDefaults
+    private let testResultsKey = "FaceDetectorTestResults"
+    
+    /// Current test ID to prevent duplicate results from the same test
+    private var currentTestId: UUID? = nil
+    
+    init() {
+        // Clear all previous test results on app launch
+        clearAllTestResults()
+    }
+    
+    // MARK: - Test Results Management
+    
+    /**
+     * Completely clears all test results from memory and persistent storage
+     */
+    private func clearAllTestResults() {
+        // Clear in-memory results
+        testResults = []
+        
+        // Clear current test ID
+        currentTestId = nil
+        
+        // Remove from UserDefaults
+        UserDefaults.standard.removeObject(forKey: testResultsKey)
+        UserDefaults.standard.synchronize()
+        
+        print("All test results cleared")
+    }
+    
+    /**
+     * Loads test results from persistent storage or initializes empty array
+     */
+    private func loadTestResults() {
+        // Always start with fresh test results
+        testResults = []
+    }
+    
+    /**
+     * Saves test results to persistent storage
+     */
+    private func saveTestResults() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(testResults)
+            UserDefaults.standard.set(data, forKey: testResultsKey)
+            UserDefaults.standard.synchronize()
+        } catch {
+            print("Error saving test results: \(error)")
+        }
+    }
     
     // MARK: - Face Detection
     
@@ -163,9 +328,10 @@ class FaceDetector {
      * - No mask characteristics detected (micro-movements, symmetry, patterns)
      *
      * - Parameter depthData: Depth data from the TrueDepth camera
+     * - Parameter storeResult: Whether to store this result in the test history (default: false)
      * - Returns: Boolean indicating whether the face is likely real (true) or a spoof (false)
      */
-    func checkLiveness(with depthData: AVDepthData) -> Bool {
+    func checkLiveness(with depthData: AVDepthData, storeResult: Bool = false) -> Bool {
         // Convert depth data to the right format
         let convertedDepthData = depthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
         let pixelBuffer = convertedDepthData.depthDataMap
@@ -326,33 +492,37 @@ class FaceDetector {
             
             let isLive = passedChecks >= 6
             
-            // Store test result data for analysis
-            storeTestResultData(
-                isLive: isLive,
-                depthMean: mean,
-                depthStdDev: stdDev,
-                depthRange: range,
-                edgeMean: edgeMean,
-                edgeStdDev: edgeStdDev,
-                centerMean: centerMean,
-                centerStdDev: centerStdDev,
-                gradientMean: gradientMean,
-                gradientStdDev: gradientStdDev,
-                isTooFlat: isTooFlat,
-                isUnrealisticDepth: isUnrealisticDepth,
-                hasSharpEdges: hasSharpEdges,
-                isTooUniform: isTooUniform,
-                hasNaturalCenterVariation: hasNaturalCenterVariation,
-                isLinearDistribution: isLinearDistribution,
-                hasUnnaturalGradients: hasUnnaturalGradients,
-                hasInconsistentTemporalChanges: hasInconsistentTemporalChanges,
-                hasMaskCharacteristics: hasMaskCharacteristics,
-                hasUnnaturalMicroMovements: hasUnnaturalMicroMovements,
-                hasUnnaturalSymmetry: hasUnnaturalSymmetry,
-                hasUnnaturalTemporalPatterns: hasUnnaturalTemporalPatterns,
-                numPassedChecks: passedChecks,
-                depthSampleCount: depthValues.count
-            )
+            // Store test result data only if explicitly requested
+            if storeResult {
+                storeTestResultData(
+                    isLive: isLive,
+                    depthMean: mean,
+                    depthStdDev: stdDev,
+                    depthRange: range,
+                    edgeMean: edgeMean,
+                    edgeStdDev: edgeStdDev,
+                    centerMean: centerMean,
+                    centerStdDev: centerStdDev,
+                    gradientMean: gradientMean,
+                    gradientStdDev: gradientStdDev,
+                    isTooFlat: isTooFlat,
+                    isUnrealisticDepth: isUnrealisticDepth,
+                    hasSharpEdges: hasSharpEdges,
+                    isTooUniform: isTooUniform,
+                    hasNaturalCenterVariation: hasNaturalCenterVariation,
+                    isLinearDistribution: isLinearDistribution,
+                    hasUnnaturalGradients: hasUnnaturalGradients,
+                    hasInconsistentTemporalChanges: hasInconsistentTemporalChanges,
+                    hasMaskCharacteristics: hasMaskCharacteristics,
+                    hasUnnaturalMicroMovements: hasUnnaturalMicroMovements,
+                    hasUnnaturalSymmetry: hasUnnaturalSymmetry,
+                    hasUnnaturalTemporalPatterns: hasUnnaturalTemporalPatterns,
+                    numPassedChecks: passedChecks,
+                    requiredChecks: 9,
+                    depthSampleCount: depthValues.count,
+                    isStillFaceDetected: isLive
+                )
+            }
             
             // Update previous values for next frame
             previousDepthValues = depthValues
@@ -523,8 +693,7 @@ class FaceDetector {
     }
     
     /**
-     * Stores test result data for analysis of false positive/negative results.
-     * Maintains a rolling buffer of the 20 most recent test results.
+     * Stores test result data for analysis.
      */
     private func storeTestResultData(
         isLive: Bool,
@@ -550,8 +719,25 @@ class FaceDetector {
         hasUnnaturalSymmetry: Bool,
         hasUnnaturalTemporalPatterns: Bool,
         numPassedChecks: Int,
-        depthSampleCount: Int
+        requiredChecks: Int,
+        depthSampleCount: Int,
+        isStillFaceDetected: Bool
     ) {
+        // Ensure we have a valid test ID before storing result
+        guard let testId = currentTestId else {
+            print("Warning: Attempted to store test result without valid test ID")
+            return
+        }
+        
+        // Check if we already have a result with this test ID
+        if testResults.contains(where: { $0.testId == testId }) {
+            print("Test result already exists for test ID: \(testId.uuidString.prefix(8))")
+            return
+        }
+        
+        // Create test result data with current timestamp
+        let currentTime = Date()
+        
         let testResult = TestResultData(
             isLive: isLive,
             depthMean: depthMean,
@@ -576,18 +762,35 @@ class FaceDetector {
             hasUnnaturalSymmetry: hasUnnaturalSymmetry,
             hasUnnaturalTemporalPatterns: hasUnnaturalTemporalPatterns,
             numPassedChecks: numPassedChecks,
+            requiredChecks: requiredChecks,
             depthSampleCount: depthSampleCount,
-            deviceOrientation: UIDevice.current.orientation
+            isStillFaceDetected: isStillFaceDetected,
+            deviceOrientation: UIDevice.current.orientation,
+            timestamp: currentTime,
+            testId: testId
         )
         
-        // Add the new result, removing oldest if we exceed maximum
-        testResults.append(testResult)
+        // Log test completion with timestamp
+        print("Test completed at \(formatDate(currentTime)): \(isLive ? "LIVE FACE" : "SPOOF")")
+        
+        // Add to results, limiting to maximum stored
+        testResults.insert(testResult, at: 0)
         if testResults.count > maxStoredResults {
-            testResults.removeFirst()
+            testResults.removeLast()
         }
         
-        // Log the count of stored results
-        print("Stored test results: \(testResults.count)")
+        // Save results to persistent storage
+        saveTestResults()
+    }
+    
+    /**
+     * Formats a date for logging
+     */
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter.string(from: date)
     }
     
     /**
@@ -601,14 +804,15 @@ class FaceDetector {
      * Returns the most recent test result, if available.
      */
     func getLastTestResult() -> TestResultData? {
-        return testResults.last
+        return testResults.first
     }
     
     /**
      * Clears all stored test results.
+     * This can be called manually to clear history.
      */
     func clearTestResults() {
-        testResults.removeAll()
+        clearAllTestResults()
     }
     
     /**
@@ -648,5 +852,102 @@ class FaceDetector {
             print("Error creating JSON: \(error)")
             return nil
         }
+    }
+    
+    /**
+     * Resets the face detector for a new test.
+     * Clears temporary data and analysis state.
+     */
+    func resetForNewTest() {
+        previousDepthValues = nil
+        previousMean = nil
+        previousGradientPatterns.removeAll()
+        
+        // Generate a new test ID for this test session
+        currentTestId = UUID()
+        
+        print("Face detector reset for new test (ID: \(currentTestId?.uuidString.prefix(8) ?? "none"))")
+    }
+    
+    /**
+     * Stores the final result of a liveness test.
+     * This should be called at the end of a test session.
+     */
+    func storeTestResult(isLive: Bool) {
+        // Ensure we have a valid test ID
+        guard let testId = currentTestId else {
+            print("Warning: Attempted to store test result without valid test ID")
+            return
+        }
+        
+        // Check if we already have a result with this test ID
+        if testResults.contains(where: { $0.testId == testId }) {
+            print("Test result already exists for test ID: \(testId.uuidString.prefix(8))")
+            return
+        }
+        
+        // Clear any previous gradient patterns 
+        previousGradientPatterns.removeAll()
+        
+        // Create a new result with minimal data
+        let currentTime = Date()
+        
+        let testResult = TestResultData(
+            isLive: isLive,
+            depthMean: 0,
+            depthStdDev: 0,
+            depthRange: 0,
+            edgeMean: 0,
+            edgeStdDev: 0,
+            centerMean: 0,
+            centerStdDev: 0,
+            gradientMean: 0,
+            gradientStdDev: 0,
+            isTooFlat: false,
+            isUnrealisticDepth: false,
+            hasSharpEdges: false,
+            isTooUniform: false,
+            hasNaturalCenterVariation: false,
+            isLinearDistribution: false,
+            hasUnnaturalGradients: false,
+            hasInconsistentTemporalChanges: false,
+            hasMaskCharacteristics: false,
+            hasUnnaturalMicroMovements: false,
+            hasUnnaturalSymmetry: false,
+            hasUnnaturalTemporalPatterns: false,
+            numPassedChecks: isLive ? 9 : 0,
+            requiredChecks: 9,
+            depthSampleCount: 0,
+            isStillFaceDetected: false,
+            deviceOrientation: UIDevice.current.orientation,
+            timestamp: currentTime,
+            testId: testId
+        )
+        
+        // Add to results, limiting to maximum stored
+        testResults.insert(testResult, at: 0)
+        if testResults.count > maxStoredResults {
+            testResults.removeLast()
+        }
+        
+        // Save results to persistent storage
+        saveTestResults()
+        
+        // Log test completion
+        print("Test result stored: \(isLive ? "LIVE FACE" : "SPOOF"), ID: \(testId.uuidString.prefix(8))")
+    }
+    
+    /**
+     * Returns the current test ID
+     */
+    func getCurrentTestId() -> UUID? {
+        return currentTestId
+    }
+    
+    /**
+     * Checks if there's a stored result for the given test ID
+     */
+    func hasResultForTest(id: UUID) -> Bool {
+        return testResults.contains(where: { $0.testId == id })
     }
 } 
