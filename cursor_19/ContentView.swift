@@ -78,20 +78,32 @@ struct ContentView: View {
                     cameraManager.setupAndStartSession()
                 }
             
-            // Debug button in top-right corner
+            // Debug buttons in top-right corner
             VStack {
                 HStack {
                     Spacer()
-                    Button(action: {
-                        prepareDebugDataAndShare()
-                    }) {
-                        Image(systemName: "ladybug.fill")
-                            .font(.system(size: 24))
-                            .foregroundColor(.red)
-                            .padding(12)
-                            .background(Color.white.opacity(0.8))
-                            .clipShape(Circle())
-                            .shadow(radius: 3)
+                    VStack(spacing: 15) {
+                        // Share debug data button
+                        Button(action: prepareDebugDataAndShare) {
+                            Image(systemName: "ladybug.fill")
+                                .font(.system(size: 24))
+                                .foregroundColor(.red)
+                                .padding(12)
+                                .background(Color.white.opacity(0.8))
+                                .clipShape(Circle())
+                                .shadow(radius: 3)
+                        }
+                        
+                        // Clear debug data button
+                        Button(action: clearDebugData) {
+                            Image(systemName: "trash.fill")
+                                .font(.system(size: 24))
+                                .foregroundColor(.gray)
+                                .padding(12)
+                                .background(Color.white.opacity(0.8))
+                                .clipShape(Circle())
+                                .shadow(radius: 3)
+                        }
                     }
                     .padding(.top, 50)
                     .padding(.trailing, 20)
@@ -220,7 +232,7 @@ struct ContentView: View {
             if let textURL = textURL {
                 shareItems.append(textURL)
             }
-            if let jsonURL = jsonURL, let jsonData = jsonData {
+            if let jsonURL = jsonURL {
                 shareItems.append(jsonURL)
             }
             
@@ -284,19 +296,28 @@ struct ContentView: View {
         cameraManager.isLiveFace = false
         cameraManager.isTestActive = true
         
+        // Reset the face detector for a clean state
+        cameraManager.faceDetector.resetForNewTest()
+        
         // Start timer with 0.1 second intervals for smooth countdown
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] _ in
             timeRemaining -= 0.1
             
             // Check if we have a live face
             if cameraManager.faceDetected && cameraManager.isLiveFace {
                 testResult = .success
+                // NOTE: We don't need to manually store the test result here
+                // as the CameraManager will have already stored the detailed result
                 stopTest()
             } else if timeRemaining <= 0 {
                 if cameraManager.faceDetected {
                     testResult = .failure // Face detected but not live
+                    // Store the failed test result with zero depth values
+                    cameraManager.faceDetector.storeTestResult(isLive: false)
                 } else {
                     testResult = .timeout // No face detected
+                    // Store the timeout test result with zero depth values
+                    cameraManager.faceDetector.storeTestResult(isLive: false)
                 }
                 stopTest()
             }
@@ -311,6 +332,17 @@ struct ContentView: View {
     private func stopTest() {
         isTestRunning = false
         stopTimer()
+        
+        // If this is a successful test, make sure detailed results are stored
+        // This ensures that even fast tests have proper results
+        if testResult == .success {
+            if let testId = cameraManager.faceDetector.getCurrentTestId() {
+                if !cameraManager.faceDetector.hasResultForTest(id: testId) {
+                    // Only call if no result is stored yet
+                    cameraManager.faceDetector.storeTestResult(isLive: true)
+                }
+            }
+        }
         
         // Reset face detection state and deactivate test mode
         cameraManager.faceDetected = false
@@ -359,6 +391,22 @@ struct ContentView: View {
             return Color.red
         }
     }
+    
+    // MARK: - Clear Debug Data
+    
+    /**
+     * Clears all debug data and resets the application state
+     */
+    private func clearDebugData() {
+        // Clear all test results
+        cameraManager.faceDetector.clearTestResults()
+        
+        // Show confirmation alert or feedback
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+        
+        print("All debug data cleared")
+    }
 }
 
 // MARK: - Activity View Controller
@@ -391,7 +439,6 @@ struct ActivityViewControllerRepresentable: UIViewControllerRepresentable {
         if isPresented && uiViewController.presentedViewController == nil {
             // Create and configure activity view controller
             let activityVC = ActivityViewController(activityItems: activityItems, applicationActivities: nil)
-            self.controller = activityVC
             
             // Configure for iPad
             if UIDevice.current.userInterfaceIdiom == .pad {
@@ -407,11 +454,18 @@ struct ActivityViewControllerRepresentable: UIViewControllerRepresentable {
             
             // Handle dismissal
             activityVC.completionWithItemsHandler = { _, _, _, _ in
-                self.isPresented = false
-                self.controller = nil
+                DispatchQueue.main.async {
+                    self.isPresented = false
+                    self.controller = nil
+                }
             }
             
-            uiViewController.present(activityVC, animated: true)
+            // Present the view controller without modifying state during view update
+            uiViewController.present(activityVC, animated: true) {
+                DispatchQueue.main.async {
+                    self.controller = activityVC
+                }
+            }
         }
     }
 }

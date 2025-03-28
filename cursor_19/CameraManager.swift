@@ -312,13 +312,18 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             let basicDepthCheck = self.analyzeDepthData(depthData)
             
             // Then use FaceDetector's liveness check for additional verification
-            let faceDetectorCheck = self.faceDetector.checkLiveness(with: depthData)
+            // If we're about to complete the test with a success, store the detailed result
+            let shouldStoreResult = self.faceDetected && !self.isLiveFace
+            let faceDetectorCheck = self.faceDetector.checkLiveness(with: depthData, storeResult: shouldStoreResult)
             
             // Consider it a live face if both checks pass
             let isLive = basicDepthCheck && faceDetectorCheck
             
+            // Only update the published property on the main thread if there's a change
             DispatchQueue.main.async {
-                self.isLiveFace = isLive
+                if self.isLiveFace != isLive {
+                    self.isLiveFace = isLive
+                }
             }
         }
     }
