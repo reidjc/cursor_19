@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 /**
  * ContentView - Main user interface for the Face Liveness Detection application
@@ -49,6 +50,15 @@ struct ContentView: View {
     /// Timer object used for the test countdown
     @State private var timer: Timer?
     
+    /// Controls whether share sheet is shown
+    @State private var isSharePresented = false
+    
+    /// Items to share
+    @State private var itemsToShare: [Any] = []
+    
+    // Reference to the share sheet controller for half-height presentation
+    @State private var shareController: ActivityViewController?
+    
     /// Possible results for a liveness test
     enum TestResult {
         case success  // A real, live face was detected
@@ -68,61 +78,190 @@ struct ContentView: View {
                     cameraManager.setupAndStartSession()
                 }
             
-            // Controls and feedback overlays
+            // Debug button in top-right corner
             VStack {
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        prepareDebugDataAndShare()
+                    }) {
+                        Image(systemName: "ladybug.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.red)
+                            .padding(12)
+                            .background(Color.white.opacity(0.8))
+                            .clipShape(Circle())
+                            .shadow(radius: 3)
+                    }
+                    .padding(.top, 50)
+                    .padding(.trailing, 20)
+                }
+                
                 Spacer()
                 
-                // Test status display - shows countdown timer during a test
-                if isTestRunning {
-                    Text("Testing: \(String(format: "%.1f", timeRemaining))s")
-                        .font(.title)
-                        .padding()
-                        .background(Color.black.opacity(0.7))
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                        
-                    // Display hint when face is detected but liveness not yet verified
-                    if cameraManager.faceDetected && !cameraManager.isLiveFace {
-                        Text("Move the camera closer to your face")
-                            .font(.headline)
+                // Controls and feedback overlays
+                VStack {
+                    // Test status display - shows countdown timer during a test
+                    if isTestRunning {
+                        Text("Testing: \(String(format: "%.1f", timeRemaining))s")
+                            .font(.title)
                             .padding()
-                            .background(Color.blue.opacity(0.7))
+                            .background(Color.black.opacity(0.7))
                             .foregroundColor(.white)
                             .cornerRadius(10)
-                            .padding(.top, 10)
+                            
+                        // Display hint when face is detected but liveness not yet verified
+                        if cameraManager.faceDetected && !cameraManager.isLiveFace {
+                            Text("Move the camera closer to your face")
+                                .font(.headline)
+                                .padding()
+                                .background(Color.blue.opacity(0.7))
+                                .foregroundColor(.white)
+                                .cornerRadius(10)
+                                .padding(.top, 10)
+                        }
                     }
-                }
-                
-                // Result display - shows outcome after a test completes
-                if let result = testResult {
-                    Text(resultText(for: result))
-                        .font(.title)
+                    
+                    // Result display - shows outcome after a test completes
+                    if let result = testResult {
+                        Text(resultText(for: result))
+                            .font(.title)
+                            .padding()
+                            .background(resultBackground(for: result))
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                            .padding(.bottom, 20)
+                    }
+                    
+                    // Start test button - initiates a new liveness test
+                    if !isTestRunning {
+                        Button(action: startTest) {
+                            Text("Start Liveness Test")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .frame(minWidth: 200)
+                        }
                         .padding()
-                        .background(resultBackground(for: result))
-                        .foregroundColor(.white)
+                        .background(Color.blue)
                         .cornerRadius(10)
-                        .padding(.bottom, 20)
-                }
-                
-                // Start test button - initiates a new liveness test
-                if !isTestRunning {
-                    Button(action: startTest) {
-                        Text("Start Liveness Test")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .frame(width: 200, height: 50)
-                            .background(Color.blue)
-                            .cornerRadius(10)
+                        .padding(.bottom, 30)
                     }
-                    .padding(.bottom, 30)
                 }
             }
         }
+        .background(ActivityViewControllerRepresentable(
+            activityItems: itemsToShare,
+            isPresented: $isSharePresented,
+            controller: $shareController
+        ))
         .onDisappear {
             // Clean up resources when view disappears
             cameraManager.stopSession()
             stopTimer()
         }
+    }
+    
+    // MARK: - Debug Data Sharing
+    
+    /**
+     * Prepares debug data and opens the system sharing sheet
+     */
+    private func prepareDebugDataAndShare() {
+        let testResults = cameraManager.faceDetector.getTestResults()
+        
+        // Prepare text file with human-readable content
+        var textContent = "Face Liveness Debug Data\n"
+        textContent += "======================\n\n"
+        textContent += "Total test results: \(testResults.count)\n\n"
+        
+        for (index, result) in testResults.enumerated() {
+            textContent += "TEST \(testResults.count - index):\n"
+            textContent += "Time: \(formatDate(result.timestamp))\n"
+            textContent += "Result: \(result.isLive ? "LIVE FACE" : "SPOOF")\n"
+            textContent += "Checks passed: \(result.numPassedChecks)/9\n"
+            textContent += "Depth samples: \(result.depthSampleCount)\n\n"
+            
+            textContent += "DEPTH STATISTICS:\n"
+            textContent += "- Mean depth: \(String(format: "%.4f", result.depthMean))\n"
+            textContent += "- StdDev: \(String(format: "%.4f", result.depthStdDev))\n"
+            textContent += "- Range: \(String(format: "%.4f", result.depthRange))\n"
+            textContent += "- Edge StdDev: \(String(format: "%.4f", result.edgeStdDev))\n"
+            textContent += "- Center StdDev: \(String(format: "%.4f", result.centerStdDev))\n"
+            textContent += "- Gradient Mean: \(String(format: "%.4f", result.gradientMean))\n"
+            textContent += "- Gradient StdDev: \(String(format: "%.4f", result.gradientStdDev))\n\n"
+            
+            textContent += "CHECK RESULTS:\n"
+            textContent += "- Depth Variation: \(checkResultText(!result.isTooFlat))\n"
+            textContent += "- Realistic Depth: \(checkResultText(!result.isUnrealisticDepth))\n" 
+            textContent += "- Edge Variation: \(checkResultText(!result.hasSharpEdges))\n"
+            textContent += "- Depth Profile: \(checkResultText(!result.isTooUniform))\n"
+            textContent += "- Center Variation: \(checkResultText(result.hasNaturalCenterVariation))\n"
+            textContent += "- Depth Distribution: \(checkResultText(!result.isLinearDistribution))\n"
+            textContent += "- Gradient Pattern: \(checkResultText(!result.hasUnnaturalGradients))\n"
+            textContent += "- Temporal Consistency: \(checkResultText(!result.hasInconsistentTemporalChanges))\n"
+            textContent += "- No Mask Detected: \(checkResultText(!result.hasMaskCharacteristics))\n\n"
+            
+            textContent += "MASK DETECTION DETAILS:\n"
+            textContent += "- Natural Micro-movements: \(checkResultText(!result.hasUnnaturalMicroMovements))\n"
+            textContent += "- Natural Symmetry: \(checkResultText(!result.hasUnnaturalSymmetry))\n"
+            textContent += "- Natural Temporal Patterns: \(checkResultText(!result.hasUnnaturalTemporalPatterns))\n\n"
+            textContent += "-----------\n\n"
+        }
+        
+        // Get JSON data
+        let jsonData = cameraManager.faceDetector.exportTestResultsAsJSON()
+        
+        // Create temporary files and prepare for sharing
+        if let textData = textContent.data(using: .utf8) {
+            let textURL = createTempFile(withData: textData, filename: "liveness_debug.txt")
+            let jsonURL = createTempFile(withData: jsonData, filename: "liveness_debug.json")
+            
+            var shareItems: [Any] = []
+            if let textURL = textURL {
+                shareItems.append(textURL)
+            }
+            if let jsonURL = jsonURL, let jsonData = jsonData {
+                shareItems.append(jsonURL)
+            }
+            
+            self.itemsToShare = shareItems
+            self.isSharePresented = true
+        }
+    }
+    
+    /**
+     * Creates a temporary file with the provided data
+     */
+    private func createTempFile(withData data: Data?, filename: String) -> URL? {
+        guard let data = data else { return nil }
+        
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent(filename)
+        
+        do {
+            try data.write(to: fileURL)
+            return fileURL
+        } catch {
+            print("Error creating temp file: \(error)")
+            return nil
+        }
+    }
+    
+    /**
+     * Returns a textual representation of a check result
+     */
+    private func checkResultText(_ passed: Bool) -> String {
+        return passed ? "✓ PASS" : "✗ FAIL"
+    }
+    
+    /**
+     * Formats a date for display
+     */
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter.string(from: date)
     }
     
     // MARK: - Test Management
@@ -218,6 +357,61 @@ struct ContentView: View {
             return Color.green
         case .failure, .timeout:
             return Color.red
+        }
+    }
+}
+
+// MARK: - Activity View Controller
+
+class ActivityViewController: UIActivityViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        // Configure sheet presentation
+        if #available(iOS 15.0, *) {
+            if let sheet = sheetPresentationController {
+                sheet.detents = [.medium()]
+                sheet.prefersGrabberVisible = true
+            }
+        }
+    }
+}
+
+struct ActivityViewControllerRepresentable: UIViewControllerRepresentable {
+    var activityItems: [Any]
+    @Binding var isPresented: Bool
+    @Binding var controller: ActivityViewController?
+    
+    func makeUIViewController(context: Context) -> UIViewController {
+        let controller = UIViewController()
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        if isPresented && uiViewController.presentedViewController == nil {
+            // Create and configure activity view controller
+            let activityVC = ActivityViewController(activityItems: activityItems, applicationActivities: nil)
+            self.controller = activityVC
+            
+            // Configure for iPad
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                activityVC.popoverPresentationController?.sourceView = uiViewController.view
+                activityVC.popoverPresentationController?.sourceRect = CGRect(
+                    x: uiViewController.view.bounds.midX,
+                    y: uiViewController.view.bounds.midY,
+                    width: 0,
+                    height: 0
+                )
+                activityVC.popoverPresentationController?.permittedArrowDirections = []
+            }
+            
+            // Handle dismissal
+            activityVC.completionWithItemsHandler = { _, _, _, _ in
+                self.isPresented = false
+                self.controller = nil
+            }
+            
+            uiViewController.present(activityVC, animated: true)
         }
     }
 }

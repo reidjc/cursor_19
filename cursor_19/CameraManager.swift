@@ -38,6 +38,9 @@ class CameraManager: NSObject, ObservableObject {
     /// Controls whether face detection processing is active
     @Published var isTestActive = false
     
+    /// Access to the face detector for test result analysis
+    private(set) var faceDetector = FaceDetector()
+    
     // MARK: - Private Properties
     
     /// Queue for handling camera session operations
@@ -48,9 +51,6 @@ class CameraManager: NSObject, ObservableObject {
     
     /// Output for receiving depth data from the TrueDepth camera
     private var depthOutput = AVCaptureDepthDataOutput()
-    
-    /// Utility for detecting faces in video frames
-    private let faceDetector = FaceDetector()
     
     // MARK: - Error Types
     
