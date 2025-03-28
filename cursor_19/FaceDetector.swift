@@ -1,6 +1,55 @@
 import Foundation
 import AVFoundation
 import Vision
+import UIKit
+
+/**
+ * TestResultData - Stores comprehensive data about a liveness test result
+ *
+ * This struct captures all relevant data points for a single liveness test,
+ * which can be used for debugging false positive/negative results.
+ */
+struct TestResultData: Identifiable {
+    let id = UUID()
+    let timestamp = Date()
+    let isLive: Bool
+    
+    // Depth data statistics
+    let depthMean: Float
+    let depthStdDev: Float
+    let depthRange: Float
+    let edgeMean: Float
+    let edgeStdDev: Float
+    let centerMean: Float
+    let centerStdDev: Float
+    
+    // Gradient statistics
+    let gradientMean: Float
+    let gradientStdDev: Float
+    
+    // Decision metrics - which checks passed/failed
+    let isTooFlat: Bool
+    let isUnrealisticDepth: Bool
+    let hasSharpEdges: Bool
+    let isTooUniform: Bool
+    let hasNaturalCenterVariation: Bool
+    let isLinearDistribution: Bool
+    let hasUnnaturalGradients: Bool
+    let hasInconsistentTemporalChanges: Bool
+    let hasMaskCharacteristics: Bool
+    
+    // Advanced mask detection metrics
+    let hasUnnaturalMicroMovements: Bool
+    let hasUnnaturalSymmetry: Bool
+    let hasUnnaturalTemporalPatterns: Bool
+    
+    // Test metadata
+    let numPassedChecks: Int
+    let depthSampleCount: Int
+    
+    // Environmental
+    let deviceOrientation: UIDeviceOrientation
+}
 
 /**
  * FaceDetector - Handles face detection and liveness verification
@@ -49,6 +98,12 @@ class FaceDetector {
     private var previousMean: Float?
     private var previousGradientPatterns: [[Float]] = [] // Store recent gradient patterns
     private let maxStoredPatterns = 5 // Number of patterns to store for analysis
+    
+    // MARK: - Test Results Storage
+    
+    /// Stores the most recent test results for analysis
+    private(set) var testResults: [TestResultData] = []
+    private let maxStoredResults = 20
     
     // MARK: - Face Detection
     
@@ -183,91 +238,127 @@ class FaceDetector {
             let stdDev = sqrt(variance)
             
             // Calculate min/max range
-            if let min = depthValues.min(), let max = depthValues.max() {
-                let range = max - min
-                
-                // Calculate edge variation
-                let edgeMean = edgeDepthValues.reduce(0, +) / Float(edgeDepthValues.count)
-                let edgeVariance = edgeDepthValues.reduce(0) { $0 + pow($1 - edgeMean, 2) } / Float(edgeDepthValues.count)
-                let edgeStdDev = sqrt(edgeVariance)
-                
-                // Calculate center region variation
-                let centerMean = centerDepthValues.reduce(0, +) / Float(centerDepthValues.count)
-                let centerVariance = centerDepthValues.reduce(0) { $0 + pow($1 - centerMean, 2) } / Float(centerDepthValues.count)
-                let centerStdDev = sqrt(centerVariance)
-                
-                // Calculate gradient statistics
-                let gradientMean = gradientValues.reduce(0, +) / Float(gradientValues.count)
-                let gradientVariance = gradientValues.reduce(0) { $0 + pow($1 - gradientMean, 2) } / Float(gradientValues.count)
-                let gradientStdDev = sqrt(gradientVariance)
-                
-                // Log statistics for debugging
-                print("Depth stats - Mean: \(mean), StdDev: \(stdDev), Range: \(range)")
-                print("Edge stats - Mean: \(edgeMean), StdDev: \(edgeStdDev)")
-                print("Center stats - Mean: \(centerMean), StdDev: \(centerStdDev)")
-                print("Gradient stats - Mean: \(gradientMean), StdDev: \(gradientStdDev)")
-                
-                // Enhanced checks for photo detection:
-                // 1. Check if depth variation is too low (typical of photos)
-                let isTooFlat = stdDev < 0.15 || range < 0.3  // More lenient thresholds
-                
-                // 2. Check if mean depth is outside reasonable range for a real face
-                let isUnrealisticDepth = mean < 0.2 || mean > 3.0  // Wider range
-                
-                // 3. Check if edge variation is too low (photos typically have sharp edges)
-                let hasSharpEdges = edgeStdDev < 0.15  // More lenient threshold
-                
-                // 4. Check if the depth profile is too uniform
-                let isTooUniform = stdDev < 0.2 && range < 0.4  // More lenient thresholds
-                
-                // 5. Check if center region shows natural face-like depth variation
-                let hasNaturalCenterVariation = centerStdDev >= 0.1  // More lenient threshold
-                
-                // 6. Check if the depth distribution is too linear (typical of photos)
-                let depthDistribution = depthValues.sorted()
-                let isLinearDistribution = checkLinearDistribution(depthDistribution)
-                
-                // 7. Check for unnatural gradient patterns (typical of moving flat surfaces)
-                let hasUnnaturalGradients = gradientStdDev < 0.005 || gradientMean > 0.2  // More lenient thresholds
-                
-                // 8. Check temporal consistency with more lenient thresholds
-                let hasInconsistentTemporalChanges = checkTemporalConsistency(mean: mean)
-                
-                // Store gradient pattern for temporal analysis
-                let currentPattern = gradientValues
-                previousGradientPatterns.append(currentPattern)
-                if previousGradientPatterns.count > maxStoredPatterns {
-                    previousGradientPatterns.removeFirst()
-                }
-                
-                // 9. Check for 3D mask characteristics
-                let hasMaskCharacteristics = checkForMaskCharacteristics(
-                    currentPattern: currentPattern,
-                    depthValues: depthValues,
-                    mean: mean,
-                    stdDev: stdDev
-                )
-                
-                // A face is considered "live" if it passes most checks (not all)
-                // Require at least 6 out of 9 checks to pass
-                let passedChecks = [
-                    !isTooFlat,
-                    !isUnrealisticDepth,
-                    !hasSharpEdges,
-                    !isTooUniform,
-                    hasNaturalCenterVariation,
-                    !isLinearDistribution,
-                    !hasUnnaturalGradients,
-                    !hasInconsistentTemporalChanges,
-                    !hasMaskCharacteristics
-                ].filter { $0 }.count
-                
-                // Update previous values for next frame
-                previousDepthValues = depthValues
-                previousMean = mean
-                
-                return passedChecks >= 6
+            guard let min = depthValues.min(), let max = depthValues.max() else {
+                return false
             }
+            let range = max - min
+            
+            // Calculate edge variation
+            let edgeMean = edgeDepthValues.reduce(0, +) / Float(edgeDepthValues.count)
+            let edgeVariance = edgeDepthValues.reduce(0) { $0 + pow($1 - edgeMean, 2) } / Float(edgeDepthValues.count)
+            let edgeStdDev = sqrt(edgeVariance)
+            
+            // Calculate center region variation
+            let centerMean = centerDepthValues.reduce(0, +) / Float(centerDepthValues.count)
+            let centerVariance = centerDepthValues.reduce(0) { $0 + pow($1 - centerMean, 2) } / Float(centerDepthValues.count)
+            let centerStdDev = sqrt(centerVariance)
+            
+            // Calculate gradient statistics
+            let gradientMean = gradientValues.reduce(0, +) / Float(gradientValues.count)
+            let gradientVariance = gradientValues.reduce(0) { $0 + pow($1 - gradientMean, 2) } / Float(gradientValues.count)
+            let gradientStdDev = sqrt(gradientVariance)
+            
+            // Log statistics for debugging
+            print("Depth stats - Mean: \(mean), StdDev: \(stdDev), Range: \(range)")
+            print("Edge stats - Mean: \(edgeMean), StdDev: \(edgeStdDev)")
+            print("Center stats - Mean: \(centerMean), StdDev: \(centerStdDev)")
+            print("Gradient stats - Mean: \(gradientMean), StdDev: \(gradientStdDev)")
+            
+            // Enhanced checks for photo detection:
+            // 1. Check if depth variation is too low (typical of photos)
+            let isTooFlat = stdDev < 0.15 || range < 0.3  // More lenient thresholds
+            
+            // 2. Check if mean depth is outside reasonable range for a real face
+            let isUnrealisticDepth = mean < 0.2 || mean > 3.0  // Wider range
+            
+            // 3. Check if edge variation is too low (photos typically have sharp edges)
+            let hasSharpEdges = edgeStdDev < 0.15  // More lenient threshold
+            
+            // 4. Check if the depth profile is too uniform
+            let isTooUniform = stdDev < 0.2 && range < 0.4  // More lenient thresholds
+            
+            // 5. Check if center region shows natural face-like depth variation
+            let hasNaturalCenterVariation = centerStdDev >= 0.1  // More lenient threshold
+            
+            // 6. Check if the depth distribution is too linear (typical of photos)
+            let depthDistribution = depthValues.sorted()
+            let isLinearDistribution = checkLinearDistribution(depthDistribution)
+            
+            // 7. Check for unnatural gradient patterns (typical of moving flat surfaces)
+            let hasUnnaturalGradients = gradientStdDev < 0.005 || gradientMean > 0.2  // More lenient thresholds
+            
+            // 8. Check temporal consistency with more lenient thresholds
+            let hasInconsistentTemporalChanges = checkTemporalConsistency(mean: mean)
+            
+            // Store gradient pattern for temporal analysis
+            let currentPattern = gradientValues
+            previousGradientPatterns.append(currentPattern)
+            if previousGradientPatterns.count > maxStoredPatterns {
+                previousGradientPatterns.removeFirst()
+            }
+            
+            // 9. Check for 3D mask characteristics
+            let hasMaskCharacteristics = checkForMaskCharacteristics(
+                currentPattern: currentPattern,
+                depthValues: depthValues,
+                mean: mean,
+                stdDev: stdDev
+            )
+            
+            // Get individual mask detection results for data collection
+            let hasUnnaturalMicroMovements = checkMicroMovements(currentPattern)
+            let hasUnnaturalSymmetry = checkDepthSymmetry(depthValues, mean: mean)
+            let hasUnnaturalTemporalPatterns = checkTemporalPatterns()
+            
+            // A face is considered "live" if it passes most checks (not all)
+            // Require at least 6 out of 9 checks to pass
+            let passedChecks = [
+                !isTooFlat,
+                !isUnrealisticDepth,
+                !hasSharpEdges,
+                !isTooUniform,
+                hasNaturalCenterVariation,
+                !isLinearDistribution,
+                !hasUnnaturalGradients,
+                !hasInconsistentTemporalChanges,
+                !hasMaskCharacteristics
+            ].filter { $0 }.count
+            
+            let isLive = passedChecks >= 6
+            
+            // Store test result data for analysis
+            storeTestResultData(
+                isLive: isLive,
+                depthMean: mean,
+                depthStdDev: stdDev,
+                depthRange: range,
+                edgeMean: edgeMean,
+                edgeStdDev: edgeStdDev,
+                centerMean: centerMean,
+                centerStdDev: centerStdDev,
+                gradientMean: gradientMean,
+                gradientStdDev: gradientStdDev,
+                isTooFlat: isTooFlat,
+                isUnrealisticDepth: isUnrealisticDepth,
+                hasSharpEdges: hasSharpEdges,
+                isTooUniform: isTooUniform,
+                hasNaturalCenterVariation: hasNaturalCenterVariation,
+                isLinearDistribution: isLinearDistribution,
+                hasUnnaturalGradients: hasUnnaturalGradients,
+                hasInconsistentTemporalChanges: hasInconsistentTemporalChanges,
+                hasMaskCharacteristics: hasMaskCharacteristics,
+                hasUnnaturalMicroMovements: hasUnnaturalMicroMovements,
+                hasUnnaturalSymmetry: hasUnnaturalSymmetry,
+                hasUnnaturalTemporalPatterns: hasUnnaturalTemporalPatterns,
+                numPassedChecks: passedChecks,
+                depthSampleCount: depthValues.count
+            )
+            
+            // Update previous values for next frame
+            previousDepthValues = depthValues
+            previousMean = mean
+            
+            return isLive
         }
         
         // Not enough valid depth data points, or couldn't calculate range
@@ -429,5 +520,133 @@ class FaceDetector {
         
         // 3D masks typically show very consistent patterns
         return meanConsistency > 0.9 && consistencyStdDev < 0.1
+    }
+    
+    /**
+     * Stores test result data for analysis of false positive/negative results.
+     * Maintains a rolling buffer of the 20 most recent test results.
+     */
+    private func storeTestResultData(
+        isLive: Bool,
+        depthMean: Float,
+        depthStdDev: Float,
+        depthRange: Float,
+        edgeMean: Float,
+        edgeStdDev: Float,
+        centerMean: Float,
+        centerStdDev: Float,
+        gradientMean: Float,
+        gradientStdDev: Float,
+        isTooFlat: Bool,
+        isUnrealisticDepth: Bool,
+        hasSharpEdges: Bool,
+        isTooUniform: Bool,
+        hasNaturalCenterVariation: Bool,
+        isLinearDistribution: Bool,
+        hasUnnaturalGradients: Bool,
+        hasInconsistentTemporalChanges: Bool,
+        hasMaskCharacteristics: Bool,
+        hasUnnaturalMicroMovements: Bool,
+        hasUnnaturalSymmetry: Bool,
+        hasUnnaturalTemporalPatterns: Bool,
+        numPassedChecks: Int,
+        depthSampleCount: Int
+    ) {
+        let testResult = TestResultData(
+            isLive: isLive,
+            depthMean: depthMean,
+            depthStdDev: depthStdDev,
+            depthRange: depthRange,
+            edgeMean: edgeMean,
+            edgeStdDev: edgeStdDev,
+            centerMean: centerMean,
+            centerStdDev: centerStdDev,
+            gradientMean: gradientMean,
+            gradientStdDev: gradientStdDev,
+            isTooFlat: isTooFlat,
+            isUnrealisticDepth: isUnrealisticDepth,
+            hasSharpEdges: hasSharpEdges,
+            isTooUniform: isTooUniform,
+            hasNaturalCenterVariation: hasNaturalCenterVariation,
+            isLinearDistribution: isLinearDistribution,
+            hasUnnaturalGradients: hasUnnaturalGradients,
+            hasInconsistentTemporalChanges: hasInconsistentTemporalChanges,
+            hasMaskCharacteristics: hasMaskCharacteristics,
+            hasUnnaturalMicroMovements: hasUnnaturalMicroMovements,
+            hasUnnaturalSymmetry: hasUnnaturalSymmetry,
+            hasUnnaturalTemporalPatterns: hasUnnaturalTemporalPatterns,
+            numPassedChecks: numPassedChecks,
+            depthSampleCount: depthSampleCount,
+            deviceOrientation: UIDevice.current.orientation
+        )
+        
+        // Add the new result, removing oldest if we exceed maximum
+        testResults.append(testResult)
+        if testResults.count > maxStoredResults {
+            testResults.removeFirst()
+        }
+        
+        // Log the count of stored results
+        print("Stored test results: \(testResults.count)")
+    }
+    
+    /**
+     * Returns the stored test results for analysis.
+     */
+    func getTestResults() -> [TestResultData] {
+        return testResults
+    }
+    
+    /**
+     * Returns the most recent test result, if available.
+     */
+    func getLastTestResult() -> TestResultData? {
+        return testResults.last
+    }
+    
+    /**
+     * Clears all stored test results.
+     */
+    func clearTestResults() {
+        testResults.removeAll()
+    }
+    
+    /**
+     * Generates JSON representation of test results for export.
+     * This can be used to share data for analysis or debugging.
+     */
+    func exportTestResultsAsJSON() -> Data? {
+        // Create a simplified dictionary representation for JSON export
+        let exportResults = testResults.map { result -> [String: Any] in
+            return [
+                "timestamp": ISO8601DateFormatter().string(from: result.timestamp),
+                "isLive": result.isLive,
+                "depthMean": result.depthMean,
+                "depthStdDev": result.depthStdDev,
+                "depthRange": result.depthRange,
+                "edgeStdDev": result.edgeStdDev,
+                "centerStdDev": result.centerStdDev,
+                "gradientMean": result.gradientMean,
+                "gradientStdDev": result.gradientStdDev,
+                "isTooFlat": result.isTooFlat,
+                "isUnrealisticDepth": result.isUnrealisticDepth,
+                "hasSharpEdges": result.hasSharpEdges,
+                "isTooUniform": result.isTooUniform,
+                "hasNaturalCenterVariation": result.hasNaturalCenterVariation,
+                "isLinearDistribution": result.isLinearDistribution,
+                "hasUnnaturalGradients": result.hasUnnaturalGradients,
+                "hasInconsistentTemporalChanges": result.hasInconsistentTemporalChanges,
+                "hasMaskCharacteristics": result.hasMaskCharacteristics,
+                "numPassedChecks": result.numPassedChecks,
+                "depthSampleCount": result.depthSampleCount
+            ]
+        }
+        
+        do {
+            return try JSONSerialization.data(withJSONObject: exportResults, options: [.prettyPrinted])
+        } catch {
+            print("Error creating JSON: \(error)")
+            return nil
+        }
     }
 } 
