@@ -1,184 +1,140 @@
-# iOS Face Liveness Detection App
+# Face Liveness Detection App
 
-A proof-of-concept iOS application that demonstrates face liveness detection using the device's front-facing TrueDepth camera capabilities. The app distinguishes between real human faces and spoof attempts such as photos, videos, or 3D masks.
-
-![App Screenshot Placeholder](app_screenshot.jpeg)
+A SwiftUI-based iOS application that uses the TrueDepth camera to detect and verify live human faces. The app implements advanced liveness detection algorithms to distinguish between real faces and spoof attempts.
 
 ## Features
 
-- **Real-time Face Detection**: Identifies human faces in the camera feed
-- **Advanced Liveness Assessment**: Analyzes 3D depth data to verify the face is real and not a spoof
-- **3D Mask Detection**: Specialized checks for detecting sophisticated 3D mask spoof attempts
-- **Timed Testing Flow**: 5-second test cycle with clear pass/fail results
-- **Privacy-Focused**: All processing happens on-device with no data storage or transmission
+- Real-time face detection using TrueDepth camera
+- Advanced liveness detection with 9 comprehensive checks
+- Detailed debug output with statistics and check results
+- Test history tracking with timestamps
+- Support for both light and dark mode
+- Comprehensive error handling and user feedback
 
-## System Requirements
+## Requirements
 
+- iOS 15.0 or later
 - iPhone with TrueDepth camera (iPhone X or newer)
-- iOS 15.0+
-- Xcode 13.0+ for development
+- Xcode 13.0 or later
+- Swift 5.5 or later
 
-## Implementation Architecture
+## Installation
 
-### Core Components
+1. Clone the repository
+2. Open the project in Xcode
+3. Build and run on a compatible device
 
-The application follows a clean architecture with the following key components:
+## Usage
 
-1. **ContentView.swift**
-   - Main SwiftUI interface that coordinates the user experience
-   - Manages test cycle timing and user feedback
-   - Coordinates between UI and camera/detection systems
-   - Provides real-time feedback during face detection process
-   - Handles test state management and result display
+1. Launch the app
+2. Grant camera permissions when prompted
+3. Position your face within the frame
+4. The app will automatically detect your face and perform liveness checks
+5. Results will be displayed in real-time with detailed statistics
 
-2. **CameraManager.swift**
-   - Handles camera setup, permissions, and configuration
-   - Manages AVCaptureSession and camera inputs/outputs
-   - Processes both regular video and depth data streams
-   - Performs preliminary depth analysis for liveness detection
-   - Coordinates between FaceDetector and UI components
+## Liveness Detection System
 
-3. **FaceDetector.swift**
-   - Uses Apple's Vision framework for face detection
-   - Implements sophisticated depth-based liveness verification
-   - Performs statistical analysis on depth data
-   - Includes specialized 3D mask detection algorithms
-   - Maintains temporal consistency checks
+The app uses a sophisticated liveness detection system that combines multiple checks to verify that a detected face is real and live. The system requires a minimum of 30 valid depth samples to perform analysis.
 
-4. **CameraPreview.swift**
-   - Bridge between SwiftUI and AVCaptureVideoPreviewLayer
-   - Manages display of camera feed in the UI
-   - Handles orientation changes and view lifecycle
-   - Provides smooth camera preview performance
+### Check Requirements
 
-### Detection Process
+- **Total Checks**: 9
+- **Mandatory Checks**: 4 (must all pass)
+- **Optional Checks**: 5 (at least 4 must pass)
+- **Minimum Depth Samples**: 30
+- **Sampling Grid**: 10x10 points (100 total samples)
 
-The face liveness detection process works as follows:
+### Detailed Check Descriptions
 
-1. The user initiates a test by tapping the "Start Liveness Test" button
-2. The app starts a 5-second countdown timer with 0.1-second precision
-3. During the test, the TrueDepth camera captures both regular video and depth data
-4. The FaceDetector processes video frames to detect the presence of a face
-5. The CameraManager analyzes depth data to determine if the face is three-dimensional
-6. Real-time feedback is provided to guide the user for optimal face positioning
-7. If a real face is detected before the timer expires, the test passes
-8. If a face is detected but fails liveness checks, the test fails as a spoof
-9. If no face is detected before the timer expires, the test times out
+#### Mandatory Checks
 
-### Liveness Detection Approach
+1. **Depth Variation**
+   - Purpose: Ensures the face has natural depth variation
+   - Thresholds:
+     - Standard deviation ≥ 0.15
+     - Depth range ≥ 0.3 meters
+   - Why: Real faces have natural depth variations, while photos are typically flat
 
-The app uses a sophisticated depth-based liveness detection system that:
+2. **Realistic Depth**
+   - Purpose: Verifies depth values are within human face range
+   - Thresholds:
+     - Mean depth between 0.2 and 3.0 meters
+   - Why: Ensures the face is at a reasonable distance from the camera
 
-1. **Multi-Point Analysis**: Samples up to 100 points across the face region in a 10x10 grid pattern to capture the 3D structure.
+3. **Edge Variation**
+   - Purpose: Checks for natural depth transitions at face edges
+   - Thresholds:
+     - Edge standard deviation ≥ 0.15
+   - Why: Real faces have soft edges, while photos often have sharp edges
 
-2. **Statistical Analysis**: Uses multiple statistical measures to distinguish real faces from spoofs:
-   - Depth variation (standard deviation and range)
-   - Edge and center region analysis
-   - Gradient pattern analysis
-   - Temporal consistency checks
-   - Micro-movement analysis
-   - Depth distribution symmetry
-   - Pattern consistency over time
+4. **Depth Profile**
+   - Purpose: Analyzes natural depth profile across the face
+   - Thresholds:
+     - Standard deviation ≥ 0.2 OR
+     - Depth range ≥ 0.4 meters
+   - Why: Real faces have natural depth profiles, while photos are uniform
 
-3. **Adaptive Thresholds**: Implements lenient but secure thresholds based on extensive testing:
-   - Requires 6 out of 9 checks to pass for a positive result
-   - Depth variation thresholds: stdDev >= 0.15, range >= 0.3
-   - Acceptable depth range: 0.2-3.0m
-   - Natural edge variation: edgeStdDev >= 0.15
-   - Center region variation: centerStdDev >= 0.1
-   - Gradient analysis: stdDev >= 0.005, mean <= 0.2
-   - Temporal changes: 0.005-1.0m between frames
-   - Micro-movement variance: stdDev >= 0.3 * mean
-   - Depth symmetry: normalized score >= 0.05
-   - Pattern consistency: mean < 0.9 or stdDev >= 0.1
+#### Optional Checks
 
-4. **Robust Detection**: The system is designed to:
-   - Handle natural face movement and variation
-   - Account for different lighting conditions
-   - Work with various face positions and distances
-   - Maintain security while reducing false negatives
-   - Detect sophisticated spoof attempts including 3D masks
+1. **Center Variation**
+   - Purpose: Verifies natural depth variation in face center
+   - Thresholds:
+     - Center standard deviation ≥ 0.1
+   - Why: Real faces have natural depth variations in the center region
 
-5. **3D Mask Detection**: The system includes specialized checks for detecting 3D masks:
-   - Analyzes micro-movement patterns in depth gradients
-   - Checks for unnatural symmetry in depth distribution
-   - Monitors temporal consistency of depth patterns
-   - Detects uniform micro-movements typical of masks
-   - Identifies overly perfect symmetry in 3D masks
-   - Recognizes unnatural pattern consistency over time
+2. **Depth Distribution**
+   - Purpose: Ensures non-linear depth distribution
+   - Method: Statistical analysis of depth value distribution
+   - Why: Real faces have natural, non-linear depth distributions
 
-In a production app, this would be enhanced with:
-- More sophisticated depth map analysis
-- Texture analysis for screen detection
-- Blink detection or gesture challenges
-- Machine learning models trained on spoof attempts
+3. **Gradient Pattern**
+   - Purpose: Checks for natural depth gradient patterns
+   - Thresholds:
+     - Gradient standard deviation ≥ 0.005
+     - Gradient mean ≤ 0.2
+   - Why: Real faces have natural depth gradients
 
-## How to Build and Run
+4. **Temporal Consistency**
+   - Purpose: Verifies natural temporal changes in depth
+   - Method: Analysis of depth changes between frames
+   - Why: Real faces show natural, consistent depth changes over time
 
-1. Clone this repository
-2. Open `cursor_19.xcodeproj` in Xcode
-3. Select your development team in the project settings
-4. Choose a target device with TrueDepth camera capabilities
-5. Build and run (⌘+R)
+5. **Natural Micro-movements**
+   - Purpose: Detects natural small movements between frames
+   - Method: Analysis of gradient pattern changes over time
+   - Requirements:
+     - Minimum 500ms between samples
+     - Up to 10 stored patterns for analysis
+   - Why: Real faces show natural micro-movements
 
-## Testing
+### Test Result Requirements
 
-To test the application:
+A face is considered "live" if it meets ALL of the following criteria:
+1. Has at least 30 valid depth samples
+2. Passes all 4 mandatory checks
+3. Passes at least 4 out of 5 optional checks
 
-1. Launch the app and grant camera permissions when prompted
-2. Position your face in the center of the screen
-3. Tap the "Start Liveness Test" button to begin a 5-second test
-4. The app will analyze your face and display one of three results:
-   - "Real Face Detected! ✅" (Success)
-   - "Spoof Detected! ❌" (Failed liveness check)
-   - "No Face Detected! ⏱" (No face found within time limit)
-5. Test the app's spoof detection by presenting a photo or video of a face
+### Debug Output
 
-## Privacy Considerations
+The app provides detailed debug information including:
+- Depth statistics (mean, standard deviation, range)
+- Edge and center variation metrics
+- Gradient pattern analysis
+- Individual check results
+- Micro-movement analysis
+- Test history with timestamps
 
-This application:
-- Processes all data locally on the device
-- Does not store or transmit any camera data or images
-- Requires camera permission, which the user can revoke at any time
-- Clearly communicates when the camera is in use
+## Technical Details
 
-## Known Limitations
-
-As a proof-of-concept, this application has the following limitations:
-
-1. **3D Mask Detection**: While the system includes specialized checks for 3D masks, sophisticated masks with natural micro-movements and imperfections might still pass detection.
-2. **Limited Testing Scenarios**: The app does not implement challenge-response mechanisms (like blinking) that would enhance spoof detection.
-3. **Device Requirements**: Only works on devices with TrueDepth cameras.
-4. **Performance Optimization**: The camera and detection processing could be further optimized for battery usage.
-
-## Future Improvements
-
-Areas for enhancement in a production version:
-
-1. **Advanced Anti-Spoofing**: Implement multiple layers of spoof detection:
-   - Enhanced 3D mask detection using machine learning models
-   - Texture analysis for detecting printed or screen-based faces
-   - Challenge-response mechanisms (blink detection, smile detection)
-   - Machine learning models trained specifically on spoof attempts
-
-2. **Performance Optimization**:
-   - Reduce processing when not in active test mode
-   - Optimize depth data analysis algorithms
-   - Add caching mechanisms for detection results
-
-3. **User Experience Enhancements**:
-   - Add face positioning guides
-   - Provide more detailed feedback on detection quality
-   - Implement accessibility features
-
-4. **Integration Options**:
-   - SDK version for embedding in other applications
-   - API for server verification of liveness results
-   - Multi-factor authentication integration
+The liveness detection system uses a combination of mandatory and optional checks:
+- Mandatory checks must all pass for a face to be considered live
+- At least 4 out of 5 optional checks must pass
+- Minimum of 30 depth samples required for analysis
+- Real-time processing of depth data at 10x10 sampling grid
 
 ## License
 
-[Specify your license information here]
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Contributing
 
