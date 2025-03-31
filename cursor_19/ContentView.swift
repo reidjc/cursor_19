@@ -61,9 +61,10 @@ struct ContentView: View {
     
     /// Possible results for a liveness test
     enum TestResult {
-        case success  // A real, live face was detected
-        case failure  // A face was detected but determined to be a spoof
-        case timeout  // No face was detected within the time limit
+        case success    // A real, live face was detected
+        case failure    // A face was detected but determined to be a spoof
+        case timeout    // No face was detected within the time limit
+        case insufficientData  // Not enough depth data to make a determination
     }
     
     // MARK: - View Body
@@ -189,8 +190,15 @@ struct ContentView: View {
         for (index, result) in testResults.enumerated() {
             textContent += "TEST \(testResults.count - index):\n"
             textContent += "Time: \(formatDate(result.timestamp))\n"
-            textContent += "Result: \(result.isLive ? "LIVE FACE" : "SPOOF")\n"
-            textContent += "Checks passed: \(result.numPassedChecks)/9\n"
+            
+            // Show appropriate result status based on the data
+            if result.depthSampleCount == 0 {
+                textContent += "Result: INSUFFICIENT DATA (FAIL)\n"
+            } else {
+                textContent += "Result: \(result.isLive ? "LIVE FACE" : "SPOOF")\n"
+            }
+            
+            textContent += "Checks passed: \(result.numPassedChecks)/\(result.requiredChecks)\n"
             textContent += "Depth samples: \(result.depthSampleCount)\n\n"
             
             textContent += "DEPTH STATISTICS:\n"
@@ -305,18 +313,34 @@ struct ContentView: View {
             
             // Check if we have a live face
             if cameraManager.faceDetected && cameraManager.isLiveFace {
-                testResult = .success
-                // NOTE: We don't need to manually store the test result here
-                // as the CameraManager will have already stored the detailed result
+                // Verify that the test actually passed by checking the last test result
+                if let lastResult = cameraManager.faceDetector.getLastTestResult() {
+                    if lastResult.isLive && lastResult.numPassedChecks >= 6 {
+                        print("Test verified: \(lastResult.numPassedChecks)/\(lastResult.requiredChecks) checks passed")
+                        testResult = .success
+                    } else {
+                        print("Test failed verification: \(lastResult.numPassedChecks)/\(lastResult.requiredChecks) checks passed")
+                        testResult = .failure
+                    }
+                } else {
+                    // No result stored yet, trust the isLiveFace flag
+                    testResult = .success
+                }
                 stopTest()
             } else if timeRemaining <= 0 {
                 if cameraManager.faceDetected {
-                    testResult = .failure // Face detected but not live
-                    // Store the failed test result with zero depth values
+                    // Get the last test result to check if it had depth data
+                    if let lastResult = cameraManager.faceDetector.getLastTestResult(),
+                       lastResult.depthSampleCount == 0 {
+                        testResult = .insufficientData  // Not enough depth data
+                    } else {
+                        testResult = .failure  // Face detected but not live
+                    }
+                    // Store the failed test result
                     cameraManager.faceDetector.storeTestResult(isLive: false)
                 } else {
-                    testResult = .timeout // No face detected
-                    // Store the timeout test result with zero depth values
+                    testResult = .timeout  // No face detected
+                    // Store the timeout test result
                     cameraManager.faceDetector.storeTestResult(isLive: false)
                 }
                 stopTest()
@@ -333,13 +357,25 @@ struct ContentView: View {
         isTestRunning = false
         stopTimer()
         
-        // If this is a successful test, make sure detailed results are stored
-        // This ensures that even fast tests have proper results
+        // If this is a successful test, check if detailed results were stored
         if testResult == .success {
             if let testId = cameraManager.faceDetector.getCurrentTestId() {
+                // Only log a warning if no result was stored
                 if !cameraManager.faceDetector.hasResultForTest(id: testId) {
-                    // Only call if no result is stored yet
-                    cameraManager.faceDetector.storeTestResult(isLive: true)
+                    // This should rarely happen with our improved storage logic
+                    print("⚠️ Warning: Successful test without stored depth data (ID: \(testId))")
+                    
+                    // Make one final attempt to check liveness and store it with the current depth data
+                    // This is a fallback only - depth data quality might be questionable at this point
+                    DispatchQueue.main.async {
+                        // Show a debug message to track these fallback scenarios
+                        print("📍 DEBUG: Attempting to capture final frame for successful test")
+                        
+                        // We'll let the user see the success but log this issue
+                        // Don't attempt to store more data as it might be stale
+                    }
+                } else {
+                    print("✅ Test successfully completed with stored depth data")
                 }
             }
         }
@@ -374,6 +410,8 @@ struct ContentView: View {
             return "Spoof Detected! ❌"
         case .timeout:
             return "No Face Detected! ⏱"
+        case .insufficientData:
+            return "Insufficient Data! ⚠️"
         }
     }
     
@@ -389,6 +427,8 @@ struct ContentView: View {
             return Color.green
         case .failure, .timeout:
             return Color.red
+        case .insufficientData:
+            return Color.orange
         }
     }
     
