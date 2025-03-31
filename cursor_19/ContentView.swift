@@ -218,13 +218,8 @@ struct ContentView: View {
             textContent += "- Center Variation: \(checkResultText(result.hasNaturalCenterVariation))\n"
             textContent += "- Depth Distribution: \(checkResultText(!result.isLinearDistribution))\n"
             textContent += "- Gradient Pattern: \(checkResultText(!result.hasUnnaturalGradients))\n"
-            textContent += "- Temporal Consistency: \(checkResultText(!result.hasInconsistentTemporalChanges))\n"
-            textContent += "- No Mask Detected: \(checkResultText(!result.hasMaskCharacteristics))\n\n"
+            textContent += "- Temporal Consistency: \(checkResultText(!result.hasInconsistentTemporalChanges))\n\n"
             
-            textContent += "MASK DETECTION DETAILS:\n"
-            textContent += "- Natural Micro-movements: \(checkResultText(!result.hasUnnaturalMicroMovements))\n"
-            textContent += "- Natural Symmetry: \(checkResultText(!result.hasUnnaturalSymmetry))\n"
-            textContent += "- Natural Temporal Patterns: \(checkResultText(!result.hasUnnaturalTemporalPatterns))\n\n"
             textContent += "-----------\n\n"
         }
         
