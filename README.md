@@ -142,5 +142,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- Apple for TrueDepth camera and Vision framework APIs
-- Google ML Kit documentation for liveness detection concepts 
+- Inspired by concepts and best practices for liveness detection discussed in documentation for Google's ML Kit and Apple's Vision framework.
+- This project utilizes Apple's Vision framework for face detection.
