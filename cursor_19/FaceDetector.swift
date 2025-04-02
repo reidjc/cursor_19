@@ -35,37 +35,6 @@ class FaceDetector {
         print("FaceDetector initialized.")
     }
     
-    // MARK: - Test Results Management (Delegated)
-
-    func clearAllTestResults() {
-        testResultManager.clearAllResults()
-    }
-
-    func getTestResults() -> [TestResultData] {
-        return testResultManager.getAllResults()
-    }
-    
-    func getLastTestResult() -> TestResultData? {
-        return testResultManager.getLastResult()
-    }
-    
-    func exportTestResultsAsJSON() -> Data? {
-        return testResultManager.exportResultsToJSON()
-    }
-    
-    // Renamed: Now takes specific result, usually called internally or via manager
-    // func storeTestResult(isLive: Bool) {
-    //     testResultManager.storeManualResult(isLive: isLive)
-    // }
-    
-    func getCurrentTestId() -> UUID? {
-        return testResultManager.getCurrentTestId()
-    }
-    
-    func hasResultForTest(id: UUID) -> Bool {
-        return testResultManager.hasResultForTest(id: id)
-    }
-
     // MARK: - Face Detection
     
     /**
@@ -115,8 +84,8 @@ class FaceDetector {
         guard depthData.count >= 100 else {
             print("Error: Insufficient depth data (\(depthData.count)) for liveness check. Expected 100.")
             if storeResult { 
-                // Use the dedicated method in TestResultManager
-                testResultManager.storeInsufficientDataResult(depthSampleCount: depthData.count)
+                // Use the dedicated print method in TestResultManager
+                testResultManager.printInsufficientDataResult(depthSampleCount: depthData.count)
             }
             return false
         }
@@ -149,10 +118,10 @@ class FaceDetector {
         // Final liveness decision
         let isLive = mandatoryChecksPassed && optionalChecksPassed
         
-        // Store detailed result if requested
+        // Print detailed result if requested
         if storeResult {
-            // Use the dedicated method in TestResultManager
-            testResultManager.storeCompletedTestResult(
+            // Use the dedicated print method in TestResultManager
+            testResultManager.printCompletedTestResult(
                 isLive: isLive,
                 checkResults: checkResults,
                 passedOptionalChecksCount: passedOptionalChecksCount,
@@ -170,9 +139,9 @@ class FaceDetector {
      */
     func resetForNewTest() {
         livenessChecker.reset() // Reset checker state
-        testResultManager.startNewTest() // Start new test session in manager
+        testResultManager.startNewTest() // Reset print tracking in manager
         lastDepthData = nil
-        print("FaceDetector reset for new test (ID: \(testResultManager.getCurrentTestId()?.uuidString.prefix(8) ?? "none"))")
+        print("FaceDetector reset for new test.")
     }
     
     // MARK: - Removed Methods & Properties

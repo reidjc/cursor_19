@@ -378,8 +378,9 @@ class LivenessChecker {
              print("Warning: Grid size (\(gridSize)) too small for defined center region (border=\(border)).")
         }
         
-        let edgeStdDev = calculateStandardDeviation(edgeDepths)
-        let centerStdDev = calculateStandardDeviation(centerDepths)
+        // Add explicit checks for empty arrays before calculating std dev
+        let edgeStdDev = edgeDepths.isEmpty ? 0 : calculateStandardDeviation(edgeDepths)
+        let centerStdDev = centerDepths.isEmpty ? 0 : calculateStandardDeviation(centerDepths)
         
         return (edgeStdDev, centerStdDev)
     }
