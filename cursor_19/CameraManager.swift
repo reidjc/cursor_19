@@ -281,7 +281,7 @@ class CameraManager: NSObject, ObservableObject {
         guard isTestActive else { return }
         
         // Process depth data on background queue
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             
             // Convert depth data to the right format
@@ -292,17 +292,19 @@ class CameraManager: NSObject, ObservableObject {
             let depthValues = self.convertDepthDataToArray(pixelBuffer)
             
             // Log depth data dimensions for debugging
-            print("Depth data dimensions: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
-            print("Sampled points: \(depthValues.count)")
+            // print("Depth data dimensions: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
+            // print("Sampled points: \(depthValues.count)")
             
             // Check liveness using FaceDetector
-            let (isLive, _) = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+            // Assuming checkLiveness now just returns Bool
+            let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
             
             // Update isLiveFace on main thread
             DispatchQueue.main.async {
                 self.isLiveFace = isLive
             }
         }
+        DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
     }
 }
 

@@ -331,12 +331,12 @@ struct ContentView: View {
                     } else {
                         testResult = .failure  // Face detected but not live
                     }
-                    // Store the failed test result
-                    cameraManager.faceDetector.storeTestResult(isLive: false)
+                    // Store the failed test result using the manager
+                    cameraManager.faceDetector.testResultManager.storeManualResult(isLive: false)
                 } else {
                     testResult = .timeout  // No face detected
-                    // Store the timeout test result
-                    cameraManager.faceDetector.storeTestResult(isLive: false)
+                    // Store the timeout test result using the manager
+                    cameraManager.faceDetector.testResultManager.storeManualResult(isLive: false)
                 }
                 stopTest()
             }
@@ -433,8 +433,8 @@ struct ContentView: View {
      * Clears all debug data and resets the application state
      */
     private func clearDebugData() {
-        // Clear all test results
-        cameraManager.faceDetector.clearTestResults()
+        // Clear all test results - Use renamed method
+        cameraManager.faceDetector.clearAllTestResults()
         
         // Show confirmation alert or feedback
         let generator = UINotificationFeedbackGenerator()
