@@ -38,6 +38,9 @@ class CameraManager: NSObject, ObservableObject {
     /// Controls whether face detection processing is active
     @Published var isTestActive = false
     
+    /// Flag to track if a face was seen at any point during the current test
+    private var faceWasDetectedThisTest = false
+    
     /// Access to the face detector for test result analysis
     private(set) var faceDetector = FaceDetector()
     
@@ -206,6 +209,40 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Test State Management
+    
+    /**
+     * Prepares the manager for a new liveness test.
+     */
+    func prepareForNewTest() {
+        // Reset state variables for the new test
+        faceDetected = false
+        isLiveFace = false
+        faceWasDetectedThisTest = false // Reset the tracking flag
+        isTestActive = true
+        
+        // Reset the FaceDetector and its components (including TestResultManager print flag)
+        faceDetector.resetForNewTest()
+        print("CameraManager prepared for new test.")
+    }
+    
+    /**
+     * Finalizes the current liveness test.
+     */
+    func finalizeTest() {
+        // Check if a face was ever detected during this test before resetting flags
+        if isTestActive && !faceWasDetectedThisTest {
+            print("Debug: Test completed without detecting any face.")
+        }
+        
+        // Reset state variables after checking the flag
+        isTestActive = false
+        // It might be good practice to also reset these here, although prepareForNewTest handles the next run
+        // faceDetected = false 
+        // isLiveFace = false
+        print("CameraManager finalized test.")
+    }
+    
     // MARK: - Depth Analysis
     
     /**
@@ -277,11 +314,25 @@ class CameraManager: NSObject, ObservableObject {
     }
     
     func depthDataOutput(_ output: AVCaptureDepthDataOutput, didOutput depthData: AVDepthData, timestamp: CMTime, connection: AVCaptureConnection) {
-        // Only process depth data if we have an active test
-        guard isTestActive else { return }
+        // Only process depth data if a test is active AND a face has been detected
+        guard isTestActive, faceDetected else { 
+            // If the test is active but no face is detected, print a debug message - REMOVED
+            /*
+            if isTestActive && !faceDetected {
+                print("Debug: Depth data received, but no face detected. Skipping liveness check.")
+            }
+            */
+            // If no face is detected, ensure isLiveFace is false
+            if isLiveFace { // Avoid unnecessary main thread dispatches
+                 DispatchQueue.main.async {
+                     self.isLiveFace = false
+                 }
+            }
+            return 
+        }
         
         // Process depth data on background queue
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             
             // Convert depth data to the right format
@@ -292,17 +343,19 @@ class CameraManager: NSObject, ObservableObject {
             let depthValues = self.convertDepthDataToArray(pixelBuffer)
             
             // Log depth data dimensions for debugging
-            print("Depth data dimensions: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
-            print("Sampled points: \(depthValues.count)")
+            // print("Depth data dimensions: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
+            // print("Sampled points: \(depthValues.count)")
             
             // Check liveness using FaceDetector
-            let (isLive, _) = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+            // Assuming checkLiveness now just returns Bool
+            let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
             
             // Update isLiveFace on main thread
             DispatchQueue.main.async {
                 self.isLiveFace = isLive
             }
         }
+        DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
     }
 }
 
@@ -326,6 +379,10 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             self.faceDetector.detectFace(in: sampleBuffer) { detected in
                 DispatchQueue.main.async {
                     self.faceDetected = detected
+                    // If a face is detected during an active test, set the flag
+                    if detected && self.isTestActive {
+                        self.faceWasDetectedThisTest = true
+                    }
                 }
             }
         }
