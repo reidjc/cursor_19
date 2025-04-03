@@ -40,7 +40,7 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 - **Total Checks**: 9
 - **Mandatory Checks**: 4 (must all pass)
-- **Optional Checks**: 5 (at least 4 must pass)
+- **Optional Checks**: 5 (at least 3 must pass)
 - **Minimum Depth Samples**: 30
 - **Sampling Grid**: 10x10 points (100 total samples)
 
@@ -48,18 +48,17 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 #### Mandatory Checks
 
-1. **Depth Variation**
-   - Purpose: Ensures the face has natural depth variation
-   - Thresholds:
-     - Standard deviation ≥ 0.15
-     - Depth range ≥ 0.3 meters
-   - Why: Real faces have natural depth variations, while photos are typically flat
-
-2. **Realistic Depth**
+1. **Realistic Depth**
    - Purpose: Verifies depth values are within human face range
    - Thresholds:
      - Mean depth between 0.2 and 3.0 meters
    - Why: Ensures the face is at a reasonable distance from the camera
+
+2. **Center Variation**
+   - Purpose: Verifies natural depth variation in face center
+   - Thresholds:
+     - Center standard deviation ≥ 0.1
+   - Why: Real faces have natural depth variations in the center region
 
 3. **Edge Variation**
    - Purpose: Checks for natural depth transitions at face edges
@@ -76,11 +75,12 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 #### Optional Checks
 
-1. **Center Variation**
-   - Purpose: Verifies natural depth variation in face center
+1. **Depth Variation**
+   - Purpose: Ensures the face has natural depth variation
    - Thresholds:
-     - Center standard deviation ≥ 0.1
-   - Why: Real faces have natural depth variations in the center region
+     - Standard deviation ≥ 0.15
+     - Depth range ≥ 0.3 meters
+   - Why: Real faces have natural depth variations, while photos are typically flat
 
 2. **Depth Distribution**
    - Purpose: Ensures non-linear depth distribution
@@ -112,7 +112,7 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 A face is considered "live" if it meets ALL of the following criteria:
 1. Has at least 30 valid depth samples
 2. Passes all 4 mandatory checks
-3. Passes at least 4 out of 5 optional checks
+3. Passes at least 3 out of 5 optional checks
 
 ### Debug Output
 
@@ -128,7 +128,7 @@ The app provides detailed debug information including:
 
 The liveness detection system uses a combination of mandatory and optional checks:
 - Mandatory checks must all pass for a face to be considered live
-- At least 4 out of 5 optional checks must pass
+- At least 3 out of 5 optional checks must pass
 - Minimum of 30 depth samples required for analysis
 - Real-time processing of depth data at 10x10 sampling grid
 

@@ -97,21 +97,23 @@ class FaceDetector {
         let checkResults = livenessChecker.performLivenessChecks(depthValues: depthData)
         
         // --- Decision Logic ---
-        // Mandatory checks:
-        let mandatoryChecksPassed = checkResults.hasRealisticDepth && checkResults.hasNaturalCenterVariation
+        // Mandatory checks (Updated: Now 4 checks)
+        let mandatoryChecksPassed = checkResults.hasRealisticDepth && 
+                                    checkResults.hasNaturalCenterVariation &&
+                                    checkResults.hasNaturalEdgeVariation && // Now mandatory
+                                    checkResults.hasNaturalDepthProfile    // Now mandatory
         
-        // Optional checks:
+        // Optional checks (Updated: Now 5 checks)
         let optionalChecks = [
             checkResults.hasNaturalVariation,
-            checkResults.hasNaturalEdgeVariation,
-            checkResults.hasNaturalDepthProfile,
             checkResults.hasNaturalDistribution,
             checkResults.hasNaturalGradientPattern,
             !checkResults.hasTemporalConsistency, // Remember: true from checker means *inconsistent*
             checkResults.hasNaturalMicroMovements
         ]
         let passedOptionalChecksCount = optionalChecks.filter { $0 }.count
-        let requiredOptionalChecks = 4 // Need 4 out of 7 optional checks
+        // Adjusted required count for the remaining 5 optional checks
+        let requiredOptionalChecks = 3 
         
         let optionalChecksPassed = passedOptionalChecksCount >= requiredOptionalChecks
         

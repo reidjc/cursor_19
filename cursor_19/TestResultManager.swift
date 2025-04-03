@@ -58,10 +58,14 @@ class TestResultManager {
             return 
         }
         
-        let totalChecks = 9 // Update if the number of checks changes
-        let numPassedChecks = (checkResults.hasRealisticDepth ? 1 : 0) + 
-                              (checkResults.hasNaturalCenterVariation ? 1 : 0) + 
-                              passedOptionalChecksCount
+        let totalChecks = 9 // Total number of checks remains 9
+        // Correct calculation for passed checks based on 4 mandatory + passed optional
+        let numPassedMandatory = (checkResults.hasRealisticDepth ? 1 : 0) + 
+                                 (checkResults.hasNaturalCenterVariation ? 1 : 0) + 
+                                 (checkResults.hasNaturalEdgeVariation ? 1 : 0) + 
+                                 (checkResults.hasNaturalDepthProfile ? 1 : 0)
+        // 'passedOptionalChecksCount' is correctly passed in from FaceDetector
+        let numPassedChecks = numPassedMandatory + passedOptionalChecksCount
 
         // Create the result data locally for printing
         let result = TestResultData(
@@ -183,8 +187,8 @@ class TestResultManager {
         print("  - [M] Realistic Depth (≥0.2, ≤3.0m):   \(checkResultText(!result.isUnrealisticDepth))")
         print("  - [M] Center Variation (StdDev ≥0.005): \(checkResultText(result.hasNaturalCenterVariation))")
         print("  - [O] Depth Variation (StdDev ≥0.02):  \(checkResultText(!result.isTooFlat))")
-        print("  - [O] Edge Variation (StdDev ≥0.02):   \(checkResultText(!result.hasSharpEdges))") // Note: Flag means *failed* edge variation
-        print("  - [O] Depth Profile (StdDev ≥0.02):  \(checkResultText(!result.isTooUniform))")
+        print("  - [M] Edge Variation (StdDev ≥0.02):   \(checkResultText(!result.hasSharpEdges))") // Note: Flag means *failed* edge variation
+        print("  - [M] Depth Profile (StdDev ≥0.02):  \(checkResultText(!result.isTooUniform))")
         print("  - [O] Distribution (Non-linear):      \(checkResultText(!result.isLinearDistribution))")
         print("  - [O] Gradient Pattern (StdDev ≥0.001): \(checkResultText(!result.hasUnnaturalGradients))")
         print("  - [O] Temporal Consistency (<0.0005|>1.5): \(checkResultText(!result.hasInconsistentTemporalChanges))") // Note: Flag means inconsistent
