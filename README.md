@@ -48,18 +48,17 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 #### Mandatory Checks
 
-1. **Depth Variation**
-   - Purpose: Ensures the face has natural depth variation
-   - Thresholds:
-     - Standard deviation ≥ 0.15
-     - Depth range ≥ 0.3 meters
-   - Why: Real faces have natural depth variations, while photos are typically flat
-
-2. **Realistic Depth**
+1. **Realistic Depth**
    - Purpose: Verifies depth values are within human face range
    - Thresholds:
      - Mean depth between 0.2 and 3.0 meters
    - Why: Ensures the face is at a reasonable distance from the camera
+
+2. **Center Variation**
+   - Purpose: Verifies natural depth variation in face center
+   - Thresholds:
+     - Center standard deviation ≥ 0.1
+   - Why: Real faces have natural depth variations in the center region
 
 3. **Edge Variation**
    - Purpose: Checks for natural depth transitions at face edges
@@ -76,11 +75,12 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 #### Optional Checks
 
-1. **Center Variation**
-   - Purpose: Verifies natural depth variation in face center
+1. **Depth Variation**
+   - Purpose: Ensures the face has natural depth variation
    - Thresholds:
-     - Center standard deviation ≥ 0.1
-   - Why: Real faces have natural depth variations in the center region
+     - Standard deviation ≥ 0.15
+     - Depth range ≥ 0.3 meters
+   - Why: Real faces have natural depth variations, while photos are typically flat
 
 2. **Depth Distribution**
    - Purpose: Ensures non-linear depth distribution

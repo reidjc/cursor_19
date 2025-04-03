@@ -225,8 +225,9 @@ class LivenessChecker {
         let isChangeTooLarge = depthChange > 1.5     // Increased threshold (allows more movement)
         
         let isInconsistent = isChangeTooSmall || isChangeTooLarge
-        // Log the actual change to help with debugging (optional, can be removed)
-        // print("Temporal change: \\(depthChange) meters - \\(isInconsistent ? "INCONSISTENT" : "CONSISTENT")")
+        
+        // Add this line for debugging:
+        print("Debug Temporal Check: deltaMean = \(String(format: "%.6f", depthChange)), TooStable=\(isChangeTooSmall), TooErratic=\(isChangeTooLarge)")
         
         return isInconsistent // True if inconsistent
     }
