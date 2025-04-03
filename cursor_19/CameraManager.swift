@@ -39,7 +39,7 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isTestActive = false
     
     /// Flag to track if a face was seen at any point during the current test
-    private var faceWasDetectedThisTest = false
+    var faceWasDetectedThisTest = false
     
     /// Access to the face detector for test result analysis
     private(set) var faceDetector = FaceDetector()

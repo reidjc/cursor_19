@@ -179,29 +179,25 @@ struct ContentView: View {
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] _ in
             timeRemaining -= 0.1
             
-            // Check if we have a live face
-            if cameraManager.faceDetected && cameraManager.isLiveFace {
-                // Verification using getLastTestResult removed - rely on isLiveFace directly
-                // if let lastResult = cameraManager.faceDetector.testResultManager.getLastTestResult() { ... }
-                // Simplified success condition:
-                print("Test verified: Live face detected.")
+            // Check if the *authoritative* result manager has flagged success for this test
+            if cameraManager.faceDetector.testResultManager.currentTestWasSuccessful {
+                // No need to print here, TestResultManager already logged the detailed success
+                // print("Test verified: Live face detected based on TestResultManager flag.") 
                 testResult = .success
                 stopTest()
             } else if timeRemaining <= 0 {
-                if cameraManager.faceDetected {
-                    // Checking lastResult removed - assume failure or insufficient data based on detection
-                    // if let lastResult = cameraManager.faceDetector.testResultManager.getLastTestResult(), ...
-                    testResult = .failure // Simplified: If face detected but not live by timeout = failure
-                    
-                    // Print the failed test result - REMOVED (Handled by final checkLiveness call implicitly)
-                    // cameraManager.faceDetector.testResultManager.printManualResult(isLive: false)
+                // Timeout condition
+                // Check if a face was ever detected during the test run
+                if cameraManager.faceWasDetectedThisTest { 
+                    // Face detected, but didn't pass (flag is false). Must be failure/spoof.
+                    testResult = .failure 
                 } else {
-                    testResult = .timeout  // No face detected
-                    // Print the timeout test result - REMOVED (Handled by final checkLiveness call implicitly)
-                    // cameraManager.faceDetector.testResultManager.printManualResult(isLive: false)
+                    // No face detected at all during the 5 seconds.
+                    testResult = .timeout
                 }
                 stopTest()
             }
+            // Removed the direct check of `cameraManager.faceDetected && cameraManager.isLiveFace`
         }
     }
     

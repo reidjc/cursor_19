@@ -10,6 +10,8 @@ class TestResultManager {
     // Re-add properties for tracking the current test print status
     private var currentTestId: UUID?
     private var hasPrintedCurrentTest: Bool = false
+    /// Tracks if the *current* test session resulted in a 'LIVE / PASSED' outcome.
+    private(set) var currentTestWasSuccessful: Bool = false
     
     // MARK: - Initialization
     
@@ -25,6 +27,7 @@ class TestResultManager {
     func startNewTest() {
         currentTestId = UUID()
         hasPrintedCurrentTest = false // Allow printing for this new test ID
+        currentTestWasSuccessful = false // Reset success flag for new test
         print("--- Starting New Test (Manager ID: \(currentTestId?.uuidString.prefix(8) ?? "none")) ---")
     }
     
@@ -90,6 +93,17 @@ class TestResultManager {
             testId: managerTestId
         )
         
+        // Set the success flag *before* potentially returning due to hasPrintedCurrentTest
+        if isLive {
+            self.currentTestWasSuccessful = true
+        }
+
+        // Prevent printing if we've already printed for this test ID
+        guard !hasPrintedCurrentTest else { 
+            // print("Debug: Already printed result for ID \(managerTestId.uuidString.prefix(8)). Skipping.")
+            return 
+        }
+        
         // Print the result directly to the console
         printTestResults(result)
         // Mark this test ID as printed
@@ -105,6 +119,10 @@ class TestResultManager {
             // print("Debug: printInsufficientDataResult called with no active manager test ID.")
             return 
         }
+
+        // Ensure the success flag remains false for insufficient data
+        // (It should already be false from startNewTest, but explicitly ensure)
+        // self.currentTestWasSuccessful = false // Implicitly false already
 
         // Prevent printing if we've already printed for this test ID
         guard !hasPrintedCurrentTest else { 
