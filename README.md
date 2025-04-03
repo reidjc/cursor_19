@@ -40,7 +40,7 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 - **Total Checks**: 9
 - **Mandatory Checks**: 4 (must all pass)
-- **Optional Checks**: 5 (at least 4 must pass)
+- **Optional Checks**: 5 (at least 3 must pass)
 - **Minimum Depth Samples**: 30
 - **Sampling Grid**: 10x10 points (100 total samples)
 
@@ -112,7 +112,7 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 A face is considered "live" if it meets ALL of the following criteria:
 1. Has at least 30 valid depth samples
 2. Passes all 4 mandatory checks
-3. Passes at least 4 out of 5 optional checks
+3. Passes at least 3 out of 5 optional checks
 
 ### Debug Output
 
@@ -128,7 +128,7 @@ The app provides detailed debug information including:
 
 The liveness detection system uses a combination of mandatory and optional checks:
 - Mandatory checks must all pass for a face to be considered live
-- At least 4 out of 5 optional checks must pass
+- At least 3 out of 5 optional checks must pass
 - Minimum of 30 depth samples required for analysis
 - Real-time processing of depth data at 10x10 sampling grid
 
