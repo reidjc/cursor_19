@@ -226,8 +226,8 @@ class LivenessChecker {
         
         let isInconsistent = isChangeTooSmall || isChangeTooLarge
         
-        // Add this line for debugging:
-        print("Debug Temporal Check: deltaMean = \(String(format: "%.6f", depthChange)), TooStable=\(isChangeTooSmall), TooErratic=\(isChangeTooLarge)")
+        // Log via LogManager instead of print
+        LogManager.shared.log("Debug Temporal Check: deltaMean = \(String(format: "%.6f", depthChange)), TooStable=\(isChangeTooSmall), TooErratic=\(isChangeTooLarge)")
         
         return isInconsistent // True if inconsistent
     }
@@ -342,7 +342,8 @@ class LivenessChecker {
      */
     private func calculateEdgeAndCenterStats(_ depthValues: [Float]) -> (edgeStdDev: Float, centerStdDev: Float) {
         guard depthValues.count >= 100 else { // Expecting 10x10 grid data
-             print("Warning: Insufficient depth values (\(depthValues.count)) for edge/center stats. Expected 100.")
+             // Also log this warning via LogManager
+             LogManager.shared.log("Warning: Insufficient depth values (\(depthValues.count)) for edge/center stats. Expected 100.")
              return (0, 0)
         }
         
@@ -376,7 +377,8 @@ class LivenessChecker {
                 }
             }
         } else {
-             print("Warning: Grid size (\(gridSize)) too small for defined center region (border=\(border)).")
+             // Also log this warning via LogManager
+             LogManager.shared.log("Warning: Grid size (\(gridSize)) too small for defined center region (border=\(border)).")
         }
         
         // Add explicit checks for empty arrays before calculating std dev
@@ -391,7 +393,8 @@ class LivenessChecker {
      */
     private func calculateGradientStats(_ depthValues: [Float]) -> (gradientMean: Float, gradientStdDev: Float) {
         guard depthValues.count >= 100 else { // Expecting 10x10 grid data
-            print("Warning: Insufficient depth values (\(depthValues.count)) for gradient stats. Expected 100.")
+            // Also log this warning via LogManager
+            LogManager.shared.log("Warning: Insufficient depth values (\(depthValues.count)) for gradient stats. Expected 100.")
             return (0, 0)
         }
         
