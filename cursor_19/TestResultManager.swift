@@ -139,25 +139,6 @@ class TestResultManager {
 
         let currentTime = Date()
         
-        // Create result locally for printing
-        let result = TestResultData(
-            isLive: false,
-            depthMean: 0.0, depthStdDev: 0.0, depthRange: 0.0,
-            edgeMean: 0.0, edgeStdDev: 0.0,
-            centerMean: 0.0, centerStdDev: 0.0,
-            gradientMean: 0.0, gradientStdDev: 0.0,
-            isTooFlat: true, isUnrealisticDepth: true, hasSharpEdges: true, isTooUniform: true,
-            hasNaturalCenterVariation: false,
-            isLinearDistribution: true, hasUnnaturalGradients: true,
-            hasInconsistentTemporalChanges: true, hasUnnaturalMicroMovements: true,
-            numPassedChecks: 0, requiredChecks: 9,
-            depthSampleCount: depthSampleCount,
-            isStillFaceDetected: false,
-            deviceOrientation: UIDevice.current.orientation,
-            timestamp: currentTime,
-            testId: managerTestId
-        )
-
         // Construct and log the insufficient data message
         let logMessage = """
         ⚠️ INSUFFICIENT DATA (Test ID: \(managerTestId.uuidString.prefix(8))) at \(formatDate(currentTime))
