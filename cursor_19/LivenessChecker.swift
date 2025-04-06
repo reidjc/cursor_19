@@ -376,9 +376,6 @@ class LivenessChecker {
                     }
                 }
             }
-        } else {
-             // Also log this warning via LogManager
-             LogManager.shared.log("Warning: Grid size (\(gridSize)) too small for defined center region (border=\(border)).")
         }
         
         // Add explicit checks for empty arrays before calculating std dev
