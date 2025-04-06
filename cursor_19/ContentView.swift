@@ -101,10 +101,14 @@ struct ContentView: View {
                     if let result = testResult {
                         Text(resultText(for: result))
                             .font(.headline)
+                            .foregroundColor(.white) // Ensure white text
                             .padding()
                             .frame(maxWidth: .infinity)
+                            // Revert to solid background with opacity
                             .background(resultBackground(for: result).opacity(0.8))
-                            .foregroundColor(.white)
+                            // Remove the material background and overlay
+                            // .background(Material.thin)
+                            // .overlay( ... )
                             .cornerRadius(15)
                             .transition(.opacity.animation(.easeInOut))
                             .padding(.horizontal) 
@@ -115,33 +119,53 @@ struct ContentView: View {
 
                 Spacer() // Pushes button/timer to the bottom
                                 
-                // Start Button / Timer Area (Combined at Bottom)
-                Group {
-                    if isTestRunning {
-                        // Display Timer Text, styled like the button
-                        Text("Testing: \(String(format: "%.1f", timeRemaining))s")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.gray) // Use a neutral color for timer background
-                            .cornerRadius(15)
-                    } else {
-                        // Display Start Button
-                        Button(action: startTest) {
-                            Text("Start Liveness Test")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .padding()
-                                .frame(maxWidth: .infinity)
-                                .background(Color.blue)
-                                .cornerRadius(15)
+                // Container for bottom elements
+                VStack(spacing: 15) {
+                    // Single Button that changes appearance and action based on state
+                    Button(action: { 
+                        if !isTestRunning { startTest() }
+                        // Button is disabled when testing, so no action needed for else 
+                    }) { 
+                        // Apply styling directly to the label content
+                        Group {
+                           if isTestRunning {
+                                Text("Testing: \(String(format: "%.1f", timeRemaining))s")
+                           } else {
+                                Text("Start Liveness Test")
+                           }
                         }
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding() // Padding inside the label's background
+                        .frame(maxWidth: .infinity) // Frame applied to label
+                        // Background applied to label
+                        .background(isTestRunning ? Color.gray : Color.blue)
+                        .cornerRadius(15)
                     }
+                    // Apply plain button style to prevent default hit testing interference
+                    .buttonStyle(.plain)
+                    // Define hit area based on the button's frame (which should match the label frame)
+                    .contentShape(Rectangle())
+                    // Disable button when test is running
+                    .disabled(isTestRunning)
+                    .transition(.opacity.animation(.easeInOut)) // Keep transition smooth
+                    
+                    // Share Logs Button - Always present for layout, but hidden/disabled when testing
+                    Button { 
+                        shareLogs()
+                    } label: {
+                        // Use only the icon for a cleaner look
+                        Image(systemName: "square.and.arrow.up")
+                            // Add padding inside the button if needed
+                            // .padding(.horizontal, 5) 
+                    }
+                    .buttonStyle(.bordered) // Keep bordered style for a defined tap area
+                    .tint(.secondary) // Changed back from .gray for better visibility
+                    .opacity(isTestRunning ? 0 : 1) // Hide when testing
+                    .disabled(isTestRunning) // Disable when testing
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 30) // Bottom safe area padding
-                .transition(.opacity.animation(.easeInOut))
 
             }
             .animation(.easeInOut, value: isTestRunning) // Animate changes based on test running state
@@ -165,6 +189,8 @@ struct ContentView: View {
      * - The timer expires (failure or timeout)
      */
     private func startTest() {
+        // LogManager.shared.clearLogs() // REMOVED: Allow logs to persist across tests
+        LogManager.shared.log("=== New Test Started ===") // Log start marker
         isTestRunning = true
         testResult = nil
         timeRemaining = 5.0
@@ -223,6 +249,44 @@ struct ContentView: View {
     private func stopTimer() {
         timer?.invalidate()
         timer = nil
+    }
+    
+    // MARK: - Log Sharing
+    
+    private func shareLogs() {
+        let logString = LogManager.shared.getLogsAsString()
+
+        guard !logString.isEmpty else {
+            LogManager.shared.log("Share Logs attempted, but no logs found.")
+            // TODO: Optionally show an alert to the user that logs are empty
+            return
+        }
+        
+        LogManager.shared.log("Presenting share sheet for logs.")
+
+        let activityViewController = UIActivityViewController(activityItems: [logString], applicationActivities: nil)
+
+        // Find the key window scene to present the activity view controller
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene, 
+              let rootViewController = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            LogManager.shared.log("Error: Could not find root view controller to present share sheet.")
+            return
+        }
+
+        // Ensure presentation happens on the main thread
+        DispatchQueue.main.async {
+            // Handle iPad popover presentation
+            if let popoverController = activityViewController.popoverPresentationController {
+                popoverController.sourceView = rootViewController.view
+                // Center the popover source rect
+                popoverController.sourceRect = CGRect(x: rootViewController.view.bounds.midX, 
+                                                    y: rootViewController.view.bounds.midY, 
+                                                    width: 0, height: 0)
+                popoverController.permittedArrowDirections = [] // No arrow for centered popover
+            }
+            
+            rootViewController.present(activityViewController, animated: true, completion: nil)
+        }
     }
     
     // MARK: - Result Formatting

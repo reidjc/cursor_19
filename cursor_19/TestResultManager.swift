@@ -17,7 +17,8 @@ class TestResultManager {
     
     init() {
         // No loading needed anymore
-        print("TestResultManager initialized (Console printing only).")
+        // Removed print statement, LogManager handles its own init log
+        // print("TestResultManager initialized (Console printing only).")
     }
     
     // MARK: - Test Lifecycle
@@ -28,7 +29,7 @@ class TestResultManager {
         currentTestId = UUID()
         hasPrintedCurrentTest = false // Allow printing for this new test ID
         currentTestWasSuccessful = false // Reset success flag for new test
-        print("--- Starting New Test (Manager ID: \(currentTestId?.uuidString.prefix(8) ?? "none")) ---")
+        LogManager.shared.log("--- Starting New Test (Manager ID: \(currentTestId?.uuidString.prefix(8) ?? "none")) ---")
     }
     
     // MARK: - Printing Results
@@ -108,8 +109,10 @@ class TestResultManager {
             return 
         }
         
-        // Print the result directly to the console
-        printTestResults(result)
+        // Log the formatted result using LogManager
+        let logString = formatTestResultForLog(result)
+        LogManager.shared.log(logString)
+        
         // Mark this test ID as printed
         hasPrintedCurrentTest = true
     }
@@ -155,10 +158,12 @@ class TestResultManager {
             testId: managerTestId
         )
 
-        print("⚠️ INSUFFICIENT DATA (Test ID: \(managerTestId.uuidString.prefix(8))) at \(formatDate(currentTime))")
-        print("  - Depth samples: \(depthSampleCount)")
-        // Optionally print the full details:
-        // printTestResults(result) 
+        // Construct and log the insufficient data message
+        let logMessage = """
+        ⚠️ INSUFFICIENT DATA (Test ID: \(managerTestId.uuidString.prefix(8))) at \(formatDate(currentTime))
+          - Depth samples: \(depthSampleCount)
+        """
+        LogManager.shared.log(logMessage.trimmingCharacters(in: .whitespacesAndNewlines))
         
         // Mark this test ID as printed (as it's a final result for this attempt)
         hasPrintedCurrentTest = true 
@@ -174,32 +179,36 @@ class TestResultManager {
     
     // MARK: - Debugging Helpers (Keep for printing)
     
-    private func printTestResults(_ result: TestResultData) {
-        // Basic console logging for a single result
-        print("\n--- Liveness Test Result (ID: \(result.testId.uuidString.prefix(8))) ---")
-        print("Timestamp: \(formatDate(result.timestamp))")
-        print("Overall Result: \(result.isLive ? "✅ LIVE" : "❌ SPOOF / FAILED")")
-        print("Checks Passed: \(result.numPassedChecks) / \(result.requiredChecks)")
-        print("Depth Samples: \(result.depthSampleCount)")
-        print("Orientation: \(result.deviceOrientation.name)")
+    // Renamed from printTestResults to formatTestResultForLog and now returns String
+    private func formatTestResultForLog(_ result: TestResultData) -> String {
+        // Basic console logging for a single result - build as a single string
+        var logOutput = ""
+        logOutput += "\n--- Liveness Test Result (ID: \(result.testId.uuidString.prefix(8))) ---"
+        logOutput += "\nTimestamp: \(formatDate(result.timestamp))"
+        logOutput += "\nOverall Result: \(result.isLive ? "✅ LIVE" : "❌ SPOOF / FAILED")"
+        logOutput += "\nChecks Passed: \(result.numPassedChecks) / \(result.requiredChecks)"
+        logOutput += "\nDepth Samples: \(result.depthSampleCount)"
+        logOutput += "\nOrientation: \(result.deviceOrientation.name)"
         
-        print("\n  Checks:")
-        print("  - [M] Realistic Depth (≥0.2, ≤3.0m):   \(checkResultText(!result.isUnrealisticDepth))")
-        print("  - [M] Center Variation (StdDev ≥0.005): \(checkResultText(result.hasNaturalCenterVariation))")
-        print("  - [O] Depth Variation (StdDev ≥0.02):  \(checkResultText(!result.isTooFlat))")
-        print("  - [M] Edge Variation (StdDev ≥0.02):   \(checkResultText(!result.hasSharpEdges))") // Note: Flag means *failed* edge variation
-        print("  - [M] Depth Profile (StdDev ≥0.02):  \(checkResultText(!result.isTooUniform))")
-        print("  - [O] Distribution (Non-linear):      \(checkResultText(!result.isLinearDistribution))")
-        print("  - [O] Gradient Pattern (StdDev ≥0.001): \(checkResultText(!result.hasUnnaturalGradients))")
-        print("  - [O] Temporal Consistency (<0.0005|>1.5): \(checkResultText(!result.hasInconsistentTemporalChanges))") // Note: Flag means inconsistent
-        print("  - [O] Micro-Movements (Natural):      \(checkResultText(!result.hasUnnaturalMicroMovements))")
+        logOutput += "\n\n  Checks:"
+        logOutput += "\n  - [M] Realistic Depth (≥0.2, ≤3.0m):   \(checkResultText(!result.isUnrealisticDepth))"
+        logOutput += "\n  - [M] Center Variation (StdDev ≥0.005): \(checkResultText(result.hasNaturalCenterVariation))"
+        logOutput += "\n  - [O] Depth Variation (StdDev ≥0.02):  \(checkResultText(!result.isTooFlat))"
+        logOutput += "\n  - [M] Edge Variation (StdDev ≥0.02):   \(checkResultText(!result.hasSharpEdges))" // Note: Flag means *failed* edge variation
+        logOutput += "\n  - [M] Depth Profile (StdDev ≥0.02):  \(checkResultText(!result.isTooUniform))"
+        logOutput += "\n  - [O] Distribution (Non-linear):      \(checkResultText(!result.isLinearDistribution))"
+        logOutput += "\n  - [O] Gradient Pattern (StdDev ≥0.001): \(checkResultText(!result.hasUnnaturalGradients))"
+        logOutput += "\n  - [O] Temporal Consistency (<0.0005|>1.5): \(checkResultText(!result.hasInconsistentTemporalChanges))" // Note: Flag means inconsistent
+        logOutput += "\n  - [O] Micro-Movements (Natural):      \(checkResultText(!result.hasUnnaturalMicroMovements))"
 
-        print("\n  Statistics:")
-        print("  - Depth: Mean=\(String(format: "%.3f", result.depthMean)), StdDev=\(String(format: "%.4f", result.depthStdDev)), Range=\(String(format: "%.4f", result.depthRange))")
-        print("  - Edge: StdDev=\(String(format: "%.4f", result.edgeStdDev))")
-        print("  - Center: StdDev=\(String(format: "%.4f", result.centerStdDev))")
-        print("  - Gradient: Mean=\(String(format: "%.4f", result.gradientMean)), StdDev=\(String(format: "%.4f", result.gradientStdDev))")
-        print("--------------------------------------\n")
+        logOutput += "\n\n  Statistics:"
+        logOutput += "\n  - Depth: Mean=\(String(format: "%.3f", result.depthMean)), StdDev=\(String(format: "%.4f", result.depthStdDev)), Range=\(String(format: "%.4f", result.depthRange))"
+        logOutput += "\n  - Edge: StdDev=\(String(format: "%.4f", result.edgeStdDev))"
+        logOutput += "\n  - Center: StdDev=\(String(format: "%.4f", result.centerStdDev))"
+        logOutput += "\n  - Gradient: Mean=\(String(format: "%.4f", result.gradientMean)), StdDev=\(String(format: "%.4f", result.gradientStdDev))"
+        logOutput += "\n--------------------------------------\n"
+        
+        return logOutput.trimmingCharacters(in: .whitespacesAndNewlines) // Trim leading/trailing whitespace
     }
 
     // Keep listFailedChecks if useful for console output, otherwise remove
