@@ -81,8 +81,11 @@ class CameraManager: NSObject, ObservableObject {
     /// Lock for thread-safe access to capturedEnrollmentData
     private let enrollmentDataLock = NSLock()
     
+    /// Stores the most recently processed depth values for potential fallback check
+    private var lastProcessedDepthValues: [Float]?
+    
     /// Holds the thresholds loaded from UserDefaults, if available
-    private var persistedThresholds: UserDepthThresholds?
+    var persistedThresholds: UserDepthThresholds?
     
     /// UserDefaults key for storing thresholds
     private let userDefaultsKey = "userDepthThresholds"
@@ -458,75 +461,152 @@ class CameraManager: NSObject, ObservableObject {
     
     // MARK: - Threshold Calculation
     
+    /// Helper struct to hold calculated statistics for a set of LivenessCheckResults
+    private struct MetricStats {
+        let meanOfMeans: Float
+        let stdDevOfMeans: Float
+        let meanOfStdDevs: Float
+        let stdDevOfStdDevs: Float
+        let meanOfRanges: Float
+        let stdDevOfRanges: Float
+        let meanOfEdgeStdDevs: Float
+        let stdDevOfEdgeStdDevs: Float
+        let meanOfCenterStdDevs: Float
+        let stdDevOfCenterStdDevs: Float
+        let meanOfGradientMeans: Float
+        let stdDevOfGradientMeans: Float
+        let meanOfGradientStdDevs: Float
+        let stdDevOfGradientStdDevs: Float
+        
+        // Absolute min/max observed values (useful for range checks)
+        let minObservedMean: Float
+        let maxObservedMean: Float
+    }
+    
     /**
      * Calculates personalized thresholds based on the captured enrollment data.
-     * Uses the mean +/- k * stddev approach across all valid captured frames.
+     * Uses data from center, closer, and further poses to establish broader thresholds.
      * - Returns: A `UserDepthThresholds` object or nil if calculation fails.
      */
     private func calculateThresholds() -> UserDepthThresholds? {
         enrollmentDataLock.lock()
-        // --- Use only data from center poses for baseline thresholds --- 
-        let centerResults = capturedEnrollmentData[.capturingCenter] ?? [] 
+        let centerResults = capturedEnrollmentData[.capturingCenter] ?? []
+        let closerResults = capturedEnrollmentData[.capturingCloser] ?? []
+        let furtherResults = capturedEnrollmentData[.capturingFurther] ?? []
         enrollmentDataLock.unlock()
         
-        LogManager.shared.log("Starting threshold calculation using \(centerResults.count) frames from '.capturingCenter' state.")
+        LogManager.shared.log("Starting threshold calculation with Center: \(centerResults.count), Closer: \(closerResults.count), Further: \(furtherResults.count) frames.")
         
-        // Need a minimum number of frames to calculate meaningful stats
-        // Require fewer frames if only using center data, but still need enough for stats
-        guard centerResults.count >= 5 else { // Require at least 5 center frames
-            LogManager.shared.log("Error: Insufficient center pose data captured (\(centerResults.count) frames < 5) for threshold calculation.")
+        let minFramesPerPose = 3 // Require at least 3 frames for a pose to be included
+        guard centerResults.count >= minFramesPerPose else { 
+            LogManager.shared.log("Error: Insufficient center pose data captured (\(centerResults.count) < \(minFramesPerPose)). Cannot calculate thresholds.")
             return nil
         }
         
-        // Extract individual statistic arrays
-        let means = centerResults.map { $0.mean }
-        let stdDevs = centerResults.map { $0.stdDev }
-        let ranges = centerResults.map { $0.range }
-        let edgeStdDevs = centerResults.map { $0.edgeStdDev }
-        let centerStdDevs = centerResults.map { $0.centerStdDev }
-        let gradientMeans = centerResults.map { $0.gradientMean }
-        let gradientStdDevs = centerResults.map { $0.gradientStdDev }
+        // --- Calculate statistics for each relevant pose dataset ---
+        var poseStatsList: [MetricStats] = []
         
-        // --- Calculate Thresholds (Initial Strategy: Mean +/- k * StdDev based on Center Poses) ---
+        if let centerStats = calculateMetricStats(from: centerResults, poseName: "Center") {
+            poseStatsList.append(centerStats)
+        }
+        if closerResults.count >= minFramesPerPose, let closerStats = calculateMetricStats(from: closerResults, poseName: "Closer") {
+             poseStatsList.append(closerStats)
+        }
+        if furtherResults.count >= minFramesPerPose, let furtherStats = calculateMetricStats(from: furtherResults, poseName: "Further") {
+             poseStatsList.append(furtherStats)
+        }
+        
+        guard !poseStatsList.isEmpty else {
+            LogManager.shared.log("Error: Could not calculate statistics for any pose.")
+            return nil // Should be prevented by initial centerResults check, but good practice
+        }
+        
+        // --- Combine stats to get overall min/max bounds --- 
         let k: Float = 2.0 // Multiplier for std dev range (tunable parameter)
         
-        // Mean Depth Range (Special case: use min/max directly? Or mean +/- k*stddev?)
-        // Let's try mean +/- k * stddev for consistency, but clamp to realistic bounds.
-        let (meanOfMeans, stdDevOfMeans) = calculateStats(from: means)
-        let calculatedMinMean = meanOfMeans - k * stdDevOfMeans
-        let calculatedMaxMean = meanOfMeans + k * stdDevOfMeans
-        // Clamp to reasonable overall limits (e.g., 0.1m to 4.0m) to avoid extremes
-        let minMeanDepth = max(0.1, calculatedMinMean)
-        let maxMeanDepth = min(4.0, calculatedMaxMean)
+        // Helper to get min/max bounds for a metric across poses
+        func getBounds( 
+            valueExtractor: (MetricStats) -> (mean: Float, stdDev: Float),
+            boundType: ThresholdBoundType,
+            absoluteClampMin: Float? = nil, 
+            absoluteClampMax: Float? = nil,
+            hardcodedRef: Float // Original hardcoded value for clamping logic
+        ) -> Float {
+            let bounds = poseStatsList.map { stats -> Float in
+                let (mean, stdDev) = valueExtractor(stats)
+                // Ensure stdDev is non-negative before potentially subtracting
+                let safeStdDev = max(0, stdDev) 
+                switch boundType {
+                case .min: return mean - k * safeStdDev
+                case .max: return mean + k * safeStdDev
+                }
+            }
+            
+            var finalBound: Float
+            switch boundType {
+            case .min:
+                finalBound = bounds.min() ?? hardcodedRef // Fallback to hardcoded if no bounds calculated
+                // Clamp: Don't let personalized min be *stricter* than hardcoded, but allow it to be *more lenient*
+                // Also apply absolute floor
+                finalBound = min(finalBound, hardcodedRef) 
+                if let clamp = absoluteClampMin { finalBound = max(clamp, finalBound) }
+            case .max:
+                finalBound = bounds.max() ?? hardcodedRef // Fallback to hardcoded
+                // Clamp: Don't let personalized max be *stricter* (lower) than hardcoded, but allow it to be *higher*
+                // Also apply absolute ceiling
+                finalBound = max(finalBound, hardcodedRef)
+                if let clamp = absoluteClampMax { finalBound = min(clamp, finalBound) }
+            }
+            return finalBound
+        }
+
+        enum ThresholdBoundType { case min, max }
+
+        // --- Calculate final thresholds --- 
+        
+        // Mean Depth Range: Use observed min/max across included poses, clamped
+        let minObserved = poseStatsList.map { $0.minObservedMean }.min() ?? 0.2
+        let maxObserved = poseStatsList.map { $0.maxObservedMean }.max() ?? 3.0
+        // Define range based on observed min/max during enrollment, plus buffer, clamped
+        let buffer: Float = 0.1 // 10cm buffer
+        let minMeanDepth = max(0.15, minObserved - buffer) // Clamp floor at 15cm
+        let maxMeanDepth = min(3.5, maxObserved + buffer) // Clamp ceiling at 3.5m
 
         // Min Standard Deviation (Lower bound: mean - k*stddev, clamped at > 0)
-        let (meanStdDev, stdDevOfStdDev) = calculateStats(from: stdDevs)
-        let calculatedMinStdDev = meanStdDev - k * stdDevOfStdDev
-        let minStdDev = max(0.001, calculatedMinStdDev) // Ensure minimum > 0
+        let minStdDev = getBounds(valueExtractor: { ($0.meanOfStdDevs, $0.stdDevOfStdDevs) }, 
+                                  boundType: .min, 
+                                  absoluteClampMin: 0.001, 
+                                  hardcodedRef: 0.02) // Original hardcoded value
 
         // Min Range (Similar to StdDev)
-        let (meanRange, stdDevOfRange) = calculateStats(from: ranges)
-        let calculatedMinRange = meanRange - k * stdDevOfRange
-        let minRange = max(0.001, calculatedMinRange)
+        let minRange = getBounds(valueExtractor: { ($0.meanOfRanges, $0.stdDevOfRanges) }, 
+                                 boundType: .min, 
+                                 absoluteClampMin: 0.001, 
+                                 hardcodedRef: 0.05) // Original hardcoded value
 
         // Min Edge StdDev (Similar to StdDev)
-        let (meanEdgeStdDev, stdDevOfEdgeStdDev) = calculateStats(from: edgeStdDevs)
-        let calculatedMinEdgeStdDev = meanEdgeStdDev - k * stdDevOfEdgeStdDev
-        let minEdgeStdDev = max(0.001, calculatedMinEdgeStdDev)
+        let minEdgeStdDev = getBounds(valueExtractor: { ($0.meanOfEdgeStdDevs, $0.stdDevOfEdgeStdDevs) }, 
+                                    boundType: .min, 
+                                    absoluteClampMin: 0.001, 
+                                    hardcodedRef: 0.02) // Original hardcoded value
 
         // Min Center StdDev (Similar to StdDev)
-        let (meanCenterStdDev, stdDevOfCenterStdDev) = calculateStats(from: centerStdDevs)
-        let calculatedMinCenterStdDev = meanCenterStdDev - k * stdDevOfCenterStdDev
-        let minCenterStdDev = max(0.001, calculatedMinCenterStdDev)
+        let minCenterStdDev = getBounds(valueExtractor: { ($0.meanOfCenterStdDevs, $0.stdDevOfCenterStdDevs) }, 
+                                      boundType: .min, 
+                                      absoluteClampMin: 0.001, 
+                                      hardcodedRef: 0.005) // Original hardcoded value
 
         // Max Gradient Mean (Upper bound: mean + k*stddev)
-        let (meanGradientMean, stdDevOfGradientMean) = calculateStats(from: gradientMeans)
-        let maxGradientMean = meanGradientMean + k * stdDevOfGradientMean
+        let maxGradientMean = getBounds(valueExtractor: { ($0.meanOfGradientMeans, $0.stdDevOfGradientMeans) }, 
+                                      boundType: .max, 
+                                      absoluteClampMax: 1.0, // Absolute reasonable ceiling 
+                                      hardcodedRef: 0.5) // Original hardcoded value
 
         // Min Gradient StdDev (Similar to StdDev)
-        let (meanGradientStdDev, stdDevOfGradientStdDev) = calculateStats(from: gradientStdDevs)
-        let calculatedMinGradientStdDev = meanGradientStdDev - k * stdDevOfGradientStdDev
-        let minGradientStdDev = max(0.0001, calculatedMinGradientStdDev)
+        let minGradientStdDev = getBounds(valueExtractor: { ($0.meanOfGradientStdDevs, $0.stdDevOfGradientStdDevs) }, 
+                                        boundType: .min, 
+                                        absoluteClampMin: 0.0001, 
+                                        hardcodedRef: 0.001) // Original hardcoded value
         
         let thresholds = UserDepthThresholds(
             minMeanDepth: minMeanDepth,
@@ -541,6 +621,55 @@ class CameraManager: NSObject, ObservableObject {
         
         thresholds.logSummary() // Log the calculated thresholds
         return thresholds
+    }
+    
+    /**
+     * Calculates metric statistics for a given set of LivenessCheckResults.
+     */
+    private func calculateMetricStats(from results: [LivenessCheckResults], poseName: String) -> MetricStats? {
+        guard !results.isEmpty else {
+            LogManager.shared.log("Warning: No results provided for calculating metric stats for pose \(poseName).")
+            return nil
+        }
+
+        let means = results.map { $0.mean }
+        let stdDevs = results.map { $0.stdDev }
+        let ranges = results.map { $0.range }
+        let edgeStdDevs = results.map { $0.edgeStdDev }
+        let centerStdDevs = results.map { $0.centerStdDev }
+        let gradientMeans = results.map { $0.gradientMean }
+        let gradientStdDevs = results.map { $0.gradientStdDev }
+
+        let (meanOfMeans, stdDevOfMeans) = calculateStats(from: means)
+        let (meanOfStdDevs, stdDevOfStdDevs) = calculateStats(from: stdDevs)
+        let (meanOfRanges, stdDevOfRanges) = calculateStats(from: ranges)
+        let (meanOfEdgeStdDevs, stdDevOfEdgeStdDevs) = calculateStats(from: edgeStdDevs)
+        let (meanOfCenterStdDevs, stdDevOfCenterStdDevs) = calculateStats(from: centerStdDevs)
+        let (meanOfGradientMeans, stdDevOfGradientMeans) = calculateStats(from: gradientMeans)
+        let (meanOfGradientStdDevs, stdDevOfGradientStdDevs) = calculateStats(from: gradientStdDevs)
+
+        // Find absolute min/max for mean depth
+        let minObservedMean = means.min() ?? 0
+        let maxObservedMean = means.max() ?? 0
+
+        return MetricStats(
+            meanOfMeans: meanOfMeans,
+            stdDevOfMeans: stdDevOfMeans,
+            meanOfStdDevs: meanOfStdDevs,
+            stdDevOfStdDevs: stdDevOfStdDevs,
+            meanOfRanges: meanOfRanges,
+            stdDevOfRanges: stdDevOfRanges,
+            meanOfEdgeStdDevs: meanOfEdgeStdDevs,
+            stdDevOfEdgeStdDevs: stdDevOfEdgeStdDevs,
+            meanOfCenterStdDevs: meanOfCenterStdDevs,
+            stdDevOfCenterStdDevs: stdDevOfCenterStdDevs,
+            meanOfGradientMeans: meanOfGradientMeans,
+            stdDevOfGradientMeans: stdDevOfGradientMeans,
+            meanOfGradientStdDevs: meanOfGradientStdDevs,
+            stdDevOfGradientStdDevs: stdDevOfGradientStdDevs,
+            minObservedMean: minObservedMean,
+            maxObservedMean: maxObservedMean
+        )
     }
     
     /**
@@ -759,46 +888,54 @@ class CameraManager: NSObject, ObservableObject {
                      self.advanceEnrollmentState()
                  }
             // --- Liveness Test Logic ---
-            } else if shouldProcessForLivenessTest { 
-                // Perform initial check (uses user thresholds if available, otherwise hardcoded)
-                let isLiveWithCurrentThresholds = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
-                var finalIsLive = isLiveWithCurrentThresholds
-                
-                // --- Fallback Logic --- 
-                // If the check failed AND user thresholds were active, retry with hardcoded thresholds.
-                if !isLiveWithCurrentThresholds && self.persistedThresholds != nil {
-                    LogManager.shared.log("Info: Liveness check failed with user thresholds. Retrying with hardcoded thresholds.")
-                    
-                    // Temporarily clear user thresholds to force hardcoded values
-                    let originalThresholds = self.faceDetector.livenessChecker.userThresholds // Should match self.persistedThresholds
-                    self.faceDetector.livenessChecker.userThresholds = nil
-                    
-                    // Re-run the check without storing another result (just get boolean outcome)
-                    let isLiveWithHardcodedThresholds = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: false) 
-                    
-                    // Restore original thresholds
-                    self.faceDetector.livenessChecker.userThresholds = originalThresholds
-                    
-                    if isLiveWithHardcodedThresholds {
-                        LogManager.shared.log("Info: Fallback check with hardcoded thresholds PASSED.")
-                        finalIsLive = true // Override original failure if fallback passes
-                    } else {
-                        LogManager.shared.log("Info: Fallback check with hardcoded thresholds also FAILED.")
-                        // finalIsLive remains false
-                    }
-                } 
-                // --- End Fallback Logic ---
+            } else if shouldProcessForLivenessTest {
+                // Original liveness check logic - runs with currently set thresholds (user or hardcoded)
+                let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+                let finalIsLive = isLive // No per-frame fallback here
                 
                  // Update isLiveFace on main thread using the final outcome
                  DispatchQueue.main.async {
                      // Only update if the state actually changed to avoid unnecessary UI refreshes
                      if self.isLiveFace != finalIsLive {
                          self.isLiveFace = finalIsLive
+                         self.lastProcessedDepthValues = depthValues
                      }
                  }
             }
         }
         DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
+    }
+    
+    /**
+     * Performs a liveness check using only hardcoded thresholds on the last processed depth data.
+     * To be called only as a fallback when a test times out after failing with user thresholds.
+     * - Returns: True if the hardcoded check passes, false otherwise.
+     */
+    func performHardcodedFallbackCheck() -> Bool {
+        guard let lastDepthValues = self.lastProcessedDepthValues else {
+            LogManager.shared.log("Error: Cannot perform fallback check, no last depth values available.")
+            return false
+        }
+        
+        guard self.persistedThresholds != nil else {
+             LogManager.shared.log("Warning: Fallback check requested, but no user thresholds were active initially.")
+             // This shouldn't happen based on ContentView logic, but good to check.
+             return false 
+        }
+
+        LogManager.shared.log("Performing fallback check with hardcoded thresholds...")
+        
+        // Temporarily clear user thresholds
+        let originalThresholds = self.faceDetector.livenessChecker.userThresholds
+        self.faceDetector.livenessChecker.userThresholds = nil
+        
+        // Run check (don't store result again)
+        let fallbackResult = self.faceDetector.checkLiveness(depthData: lastDepthValues, storeResult: false)
+        
+        // Restore thresholds
+        self.faceDetector.livenessChecker.userThresholds = originalThresholds
+        
+        return fallbackResult
     }
 }
 

@@ -324,31 +324,31 @@ struct ContentView: View {
             
             // Check if the *authoritative* result manager has flagged success for this test
             if cameraManager.faceDetector.testResultManager.currentTestWasSuccessful {
-                // No need to print here, TestResultManager already logged the detailed success
-                // print("Test verified: Live face detected based on TestResultManager flag.") 
                 testResult = .success
                 stopTest()
             } else if timeRemaining <= 0 {
                 // --- Timeout Condition --- 
-                // Check the FINAL outcome after potential fallback
-                if cameraManager.isLiveFace { 
-                    // If isLiveFace is true, it means either the initial check passed
-                    // or the fallback check passed. Since we reached timeout, it implies
-                    // the initial check might have failed, but the fallback succeeded.
-                    // If the initial check succeeded, stopTest() would have been called earlier.
-                    // Therefore, reaching here with isLiveFace == true means fallback success.
-                    // (This assumes stopTest() correctly stops the timer and prevents this block execution on immediate success)
-                    testResult = .fallbackSuccess
-                } else if cameraManager.faceWasDetectedThisTest {
-                    // Face detected at some point, but final isLiveFace is false (both checks failed)
-                    testResult = .failure
+                if cameraManager.faceWasDetectedThisTest {
+                    // Face detected, but failed initial checks. Try fallback.
+                    if cameraManager.persistedThresholds != nil { // Only fallback if user thresholds were active
+                        LogManager.shared.log("Info: Test timed out with user thresholds. Performing fallback check...")
+                        if cameraManager.performHardcodedFallbackCheck() {
+                            testResult = .fallbackSuccess
+                            LogManager.shared.log("Info: Fallback check PASSED.")
+                        } else {
+                            testResult = .failure // Both checks failed
+                            LogManager.shared.log("Info: Fallback check FAILED.")
+                        }
+                    } else {
+                        // No user thresholds, so initial failure is final
+                        testResult = .failure
+                    }
                 } else {
                     // No face detected at all during the 5 seconds.
                     testResult = .timeout
                 }
                 stopTest()
             }
-            // Removed the direct check of `cameraManager.faceDetected && cameraManager.isLiveFace`
         }
     }
     

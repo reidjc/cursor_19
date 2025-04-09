@@ -263,8 +263,8 @@ class LivenessChecker {
         
         let isInconsistent = isChangeTooSmall || isChangeTooLarge
         
-        // Log via LogManager instead of print
-        LogManager.shared.log("Debug Temporal Check: deltaMean = \(String(format: "%.6f", depthChange)), TooStable=\(isChangeTooSmall), TooErratic=\(isChangeTooLarge)")
+        // Log via LogManager instead of print (COMMENTED OUT - too verbose)
+        // LogManager.shared.log("Debug Temporal Check: deltaMean = \(String(format: "%.6f", depthChange)), TooStable=\(isChangeTooSmall), TooErratic=\(isChangeTooLarge)")
         
         return isInconsistent // True if inconsistent
     }
