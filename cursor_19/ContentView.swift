@@ -322,8 +322,10 @@ struct ContentView: View {
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] _ in
             timeRemaining -= 0.1
             
-            // Check if the *authoritative* result manager has flagged success for this test
-            if cameraManager.faceDetector.testResultManager.currentTestWasSuccessful {
+            // Check if the CameraManager reports a live face based on the latest frame check
+            if cameraManager.isLiveFace { 
+                // Note: isLiveFace could be true due to either user or hardcoded thresholds passing in CameraManager.
+                // We consider any pass during the timer as a primary success.
                 testResult = .success
                 stopTest()
             } else if timeRemaining <= 0 {
