@@ -402,14 +402,18 @@ class CameraManager: NSObject, ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + self.captureTimeout, execute: timeoutWorkItem)
                 
             case .calculatingThresholds:
-                // Threshold calculation (Step 2.6) will eventually transition state
-                // For now, simulate calculation and transition to complete after short delay
-                let workItem = DispatchWorkItem { [weak self] in
-                    LogManager.shared.log("Debug: Simulating threshold calculation complete.")
-                    self?.updateEnrollmentState(to: .enrollmentComplete) // Explicitly set final state
+                // Trigger actual threshold calculation
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in // Perform calculation off main thread
+                    guard let self = self else { return }
+                    if let calculatedThresholds = self.calculateThresholds() {
+                        // TODO: Step 2.7 - Persist these thresholds
+                        // For now, just log and transition state
+                        self.updateEnrollmentState(to: .enrollmentComplete)
+                    } else {
+                        LogManager.shared.log("Error: Threshold calculation failed.")
+                        self.updateEnrollmentState(to: .enrollmentFailed)
+                    }
                 }
-                self.enrollmentTimerWorkItem = workItem
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
                 
             case .enrollmentComplete, .enrollmentFailed, .notEnrolled:
                 // Final states, cancel any pending timers
@@ -432,6 +436,109 @@ class CameraManager: NSObject, ObservableObject {
          }
          LogManager.shared.log("Enrollment sequence cancelled.")
      }
+    
+    // MARK: - Threshold Calculation
+    
+    /**
+     * Calculates personalized thresholds based on the captured enrollment data.
+     * Uses the mean +/- k * stddev approach across all valid captured frames.
+     * - Returns: A `UserDepthThresholds` object or nil if calculation fails.
+     */
+    private func calculateThresholds() -> UserDepthThresholds? {
+        enrollmentDataLock.lock()
+        // --- Use only data from center poses for baseline thresholds --- 
+        let centerResults = capturedEnrollmentData[.capturingCenter] ?? [] 
+        enrollmentDataLock.unlock()
+        
+        LogManager.shared.log("Starting threshold calculation using \(centerResults.count) frames from '.capturingCenter' state.")
+        
+        // Need a minimum number of frames to calculate meaningful stats
+        // Require fewer frames if only using center data, but still need enough for stats
+        guard centerResults.count >= 5 else { // Require at least 5 center frames
+            LogManager.shared.log("Error: Insufficient center pose data captured (\(centerResults.count) frames < 5) for threshold calculation.")
+            return nil
+        }
+        
+        // Extract individual statistic arrays
+        let means = centerResults.map { $0.mean }
+        let stdDevs = centerResults.map { $0.stdDev }
+        let ranges = centerResults.map { $0.range }
+        let edgeStdDevs = centerResults.map { $0.edgeStdDev }
+        let centerStdDevs = centerResults.map { $0.centerStdDev }
+        let gradientMeans = centerResults.map { $0.gradientMean }
+        let gradientStdDevs = centerResults.map { $0.gradientStdDev }
+        
+        // --- Calculate Thresholds (Initial Strategy: Mean +/- k * StdDev based on Center Poses) ---
+        let k: Float = 2.0 // Multiplier for std dev range (tunable parameter)
+        
+        // Mean Depth Range (Special case: use min/max directly? Or mean +/- k*stddev?)
+        // Let's try mean +/- k * stddev for consistency, but clamp to realistic bounds.
+        let (meanOfMeans, stdDevOfMeans) = calculateStats(from: means)
+        let calculatedMinMean = meanOfMeans - k * stdDevOfMeans
+        let calculatedMaxMean = meanOfMeans + k * stdDevOfMeans
+        // Clamp to reasonable overall limits (e.g., 0.1m to 4.0m) to avoid extremes
+        let minMeanDepth = max(0.1, calculatedMinMean)
+        let maxMeanDepth = min(4.0, calculatedMaxMean)
+
+        // Min Standard Deviation (Lower bound: mean - k*stddev, clamped at > 0)
+        let (meanStdDev, stdDevOfStdDev) = calculateStats(from: stdDevs)
+        let calculatedMinStdDev = meanStdDev - k * stdDevOfStdDev
+        let minStdDev = max(0.001, calculatedMinStdDev) // Ensure minimum > 0
+
+        // Min Range (Similar to StdDev)
+        let (meanRange, stdDevOfRange) = calculateStats(from: ranges)
+        let calculatedMinRange = meanRange - k * stdDevOfRange
+        let minRange = max(0.001, calculatedMinRange)
+
+        // Min Edge StdDev (Similar to StdDev)
+        let (meanEdgeStdDev, stdDevOfEdgeStdDev) = calculateStats(from: edgeStdDevs)
+        let calculatedMinEdgeStdDev = meanEdgeStdDev - k * stdDevOfEdgeStdDev
+        let minEdgeStdDev = max(0.001, calculatedMinEdgeStdDev)
+
+        // Min Center StdDev (Similar to StdDev)
+        let (meanCenterStdDev, stdDevOfCenterStdDev) = calculateStats(from: centerStdDevs)
+        let calculatedMinCenterStdDev = meanCenterStdDev - k * stdDevOfCenterStdDev
+        let minCenterStdDev = max(0.001, calculatedMinCenterStdDev)
+
+        // Max Gradient Mean (Upper bound: mean + k*stddev)
+        let (meanGradientMean, stdDevOfGradientMean) = calculateStats(from: gradientMeans)
+        let maxGradientMean = meanGradientMean + k * stdDevOfGradientMean
+
+        // Min Gradient StdDev (Similar to StdDev)
+        let (meanGradientStdDev, stdDevOfGradientStdDev) = calculateStats(from: gradientStdDevs)
+        let calculatedMinGradientStdDev = meanGradientStdDev - k * stdDevOfGradientStdDev
+        let minGradientStdDev = max(0.0001, calculatedMinGradientStdDev)
+        
+        let thresholds = UserDepthThresholds(
+            minMeanDepth: minMeanDepth,
+            maxMeanDepth: maxMeanDepth,
+            minStdDev: minStdDev,
+            minRange: minRange,
+            minEdgeStdDev: minEdgeStdDev,
+            minCenterStdDev: minCenterStdDev,
+            maxGradientMean: maxGradientMean,
+            minGradientStdDev: minGradientStdDev
+        )
+        
+        thresholds.logSummary() // Log the calculated thresholds
+        return thresholds
+    }
+    
+    /**
+     * Helper to calculate mean and standard deviation for an array of Floats.
+     * - Parameter values: Array of Float values.
+     * - Returns: Tuple containing (mean, standardDeviation). Returns (0, 0) for empty or single-element arrays.
+     */
+    private func calculateStats(from values: [Float]) -> (mean: Float, standardDeviation: Float) {
+        let count = Float(values.count)
+        guard count > 1 else { return (values.first ?? 0, 0) } // Return mean if only 1 value, 0 stddev
+        
+        let mean = values.reduce(0, +) / count
+        let variance = values.reduce(0) { $0 + pow($1 - mean, 2) } / count // Population variance
+        let standardDeviation = sqrt(variance)
+        
+        return (mean, standardDeviation)
+    }
     
     // MARK: - Depth Analysis
     

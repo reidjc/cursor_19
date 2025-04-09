@@ -59,19 +59,11 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
 
 **Phase 2: Threshold Calculation and Integration**
 
-6.  **Threshold Calculation Strategy:**
+6.  **Threshold Calculation Strategy:** (Completed - Revised)
     *   Create a new structure, perhaps `UserDepthThresholds: Codable`, to hold the calculated min/max values for each key statistic (e.g., `minCenterStdDev`, `maxCenterStdDev`, `minEdgeStdDev`, etc.).
     *   Implement a function `calculateThresholds(from capturedData: [EnrollmentState: [LivenessCheckResults]]) -> UserDepthThresholds?`.
-    *   **Initial Strategy:**
-        *   For each statistic (mean, stdDev, range, edgeStdDev, centerStdDev, gradientMean, gradientStdDev):
-            *   Gather all values captured across *all* poses (center, left, right, etc.) for that statistic.
-            *   Calculate the overall mean and standard deviation of these collected values.
-            *   Define the threshold range based on this distribution. For example:
-                *   `minCenterStdDev = mean(centerStdDev_values) - k * stddev(centerStdDev_values)`
-                *   `maxCenterStdDev = mean(centerStdDev_values) + k * stddev(centerStdDev_values)`
-                *   (Repeat for other stats). The multiplier `k` needs tuning (start with `k=1.5` or `k=2.0` for conservative estimates).
-        *   Consider using the statistics captured *only* during `.capturingCenter` as the primary basis, and using the variation observed during movements (left/right/up/down/closer/further) to determine the *allowable range* (the `k * stddev` part). This might be more robust. Let's refine this during implementation.
-        *   The `hasRealisticDepthRange` check (`mean >= 0.2 && mean <= 3.0`) might use the min/max of the `mean` values observed during the `.capturingCloser` and `.capturingFurther` states, plus a safety margin.
+    *   **Initial Strategy:** (Discarded) Mean +/- k\*stddev across *all* captured poses. Produced counter-intuitive results compared to hardcoded values.
+    *   **Revised Strategy (Implemented):** Mean +/- k\*stddev using statistics calculated *only* from data captured during `.capturingCenter` states. Produced more plausible results, but still highlighted potential issues with using mean/stddev for defining minimum required variation.
     *   Call this function when the enrollment sequence reaches the `.calculatingThresholds` state. Transition to `.enrollmentComplete` if successful, `.enrollmentFailed` otherwise.
     *   *Testing:* Add logging to output the captured statistics for each pose and the final calculated `UserDepthThresholds`. Manually inspect these values to see if they seem reasonable (e.g., are the ranges plausible?). Perform the enrollment process multiple times under slightly different conditions (lighting, distance) and see how the thresholds vary.
 
@@ -93,12 +85,15 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
         *   Enroll a *new* face. Run the standard test again. Verify the test now uses the *personalized* thresholds (add logging in `LivenessChecker` to confirm which thresholds are being used). The test should ideally pass more reliably for the newly enrolled face.
         *   Test with spoofs (photos/videos) after enrollment to ensure the personalized thresholds are still effective at rejecting them (i.e., maintain security). Tune the threshold calculation (`k` factor) if necessary.
 
-**Phase 3: Fallback and Refinement (Lower Priority/Future)**
-
 9.  **Implement Fallback:**
     *   If a standard liveness test (using depth + personalized thresholds) fails, provide an option or automatically trigger a fallback to the challenge/response mechanism (similar to the enrollment flow, but perhaps shorter/simpler, just proving liveness without saving data). This requires adding states to the main testing flow, not just enrollment. (Defer this implementation until the core enrollment and personalized threshold system works well).
 
 10. **Refine Threshold Calculation:**
     *   Based on testing results (especially false positives/negatives across different enrolled users), refine the threshold calculation strategy in step 6. Analyze the collected `TestResultData` for patterns. Maybe certain poses are more critical for specific thresholds? Maybe a weighted average is needed?
+    *   **Alternative Strategies to Explore:**
+        *   **Combined Pose Data:** Calculate stats for Center, Close, and Far poses separately. Derive final thresholds by taking the min-of-minimums and max-of-maximums across these poses to establish a broader acceptable range that accounts for distance variation without needing a dynamic model.
+        *   **Percentile-Based:** Instead of mean/stddev, use percentiles (e.g., 5th percentile for minimums, 95th for maximums) based on the collected data (either center-only or combined).
+        *   **Clamping:** Ensure calculated thresholds don't become excessively strict or lenient by clamping them relative to the original hardcoded values (e.g., `finalMin = max(hardcodedMin, calculatedMin)`).
+        *   **Distance Scaling Model:** Explicitly model how thresholds should change based on the measured distance during the live test, using the close/center/far enrollment data to define the scaling factor.
 
 --- 
