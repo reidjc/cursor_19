@@ -74,10 +74,9 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
     *   Add a "Reset Enrollment" button somewhere (perhaps in a settings view or debug menu) to clear saved thresholds and allow re-enrollment.
     *   *Testing:* Complete enrollment successfully. Close and reopen the app. Verify enrollment is not required again. Reset enrollment, close and reopen. Verify enrollment *is* required again. Check `UserDefaults` manually (if possible) or add logging to confirm saving/loading.
 
-8.  **Integrate Thresholds into Liveness Check:**
+8.  **Integrate Thresholds into Liveness Check:** (Completed)
     *   Modify `LivenessChecker.swift`. Add a property `var userThresholds: UserDepthThresholds?`.
     *   Update the individual check functions (`hasNaturalDepthVariation`, `hasRealisticDepthRange`, `hasNaturalEdgeVariation`, `hasNaturalCenterVariation`, etc.) to use the values from `userThresholds` if available, otherwise fall back to the original hardcoded values.
-        *   Example: `func hasNaturalCenterVariation(centerStdDev: Float) -> Bool { guard let thresholds = userThresholds else { return centerStdDev >= 0.005 /* Original hardcoded value */ } return centerStdDev >= thresholds.minCenterStdDev && centerStdDev <= thresholds.maxCenterStdDev }` (Adjust logic based on whether you store min/max or just a minimum).
     *   In `CameraManager` or `FaceDetector`, ensure the loaded `UserDepthThresholds` are passed to the `LivenessChecker` instance before performing checks.
     *   Update `ContentView` (or relevant UI): If `enrollmentState` is `.enrollmentComplete`, the main button should say "Start Test" and trigger the standard liveness check flow (using the new personalized thresholds).
     *   *Testing:*

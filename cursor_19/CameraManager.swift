@@ -124,6 +124,8 @@ class CameraManager: NSObject, ObservableObject {
         self.persistedThresholds = loadThresholds()
         // Set initial enrollment state based on loaded thresholds
         self.enrollmentState = (self.persistedThresholds != nil) ? .enrollmentComplete : .notEnrolled
+        // Pass loaded thresholds to the checker
+        self.faceDetector.livenessChecker.userThresholds = self.persistedThresholds
         LogManager.shared.log("CameraManager initialized. Enrollment state: \(self.enrollmentState.rawValue)")
     }
     
@@ -570,6 +572,8 @@ class CameraManager: NSObject, ObservableObject {
             LogManager.shared.log("Successfully saved user thresholds to UserDefaults.")
             // Update the in-memory persisted thresholds as well
             self.persistedThresholds = thresholds
+            // Update the checker instance with the new thresholds
+            self.faceDetector.livenessChecker.userThresholds = thresholds
         } catch {
             LogManager.shared.log("Error: Failed to encode or save user thresholds: \(error.localizedDescription)")
         }
@@ -605,6 +609,8 @@ class CameraManager: NSObject, ObservableObject {
     private func clearSavedThresholds() {
         UserDefaults.standard.removeObject(forKey: userDefaultsKey)
         self.persistedThresholds = nil
+        // Clear thresholds from the checker instance
+        self.faceDetector.livenessChecker.userThresholds = nil
         LogManager.shared.log("Cleared saved user thresholds from UserDefaults.")
     }
     

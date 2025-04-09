@@ -23,6 +23,18 @@ struct LivenessCheckResults {
 
 class LivenessChecker {
     
+    // MARK: - Thresholds
+    
+    /// Optional personalized thresholds loaded for the current user.
+    var userThresholds: UserDepthThresholds? {
+        didSet {
+            if userThresholds != nil {
+                // Log only when thresholds are actually set
+                LogManager.shared.log("LivenessChecker: User-specific thresholds are set.")
+            }
+        }
+    }
+    
     // MARK: - State Properties
     
     private var previousDepthValues: [Float]?
@@ -124,8 +136,12 @@ class LivenessChecker {
      */
     private func hasNaturalDepthVariation(stdDev: Float, range: Float) -> Bool {
         // Real faces should have sufficient depth variation
-        // Adjusted thresholds to be more accommodating
-        return stdDev >= 0.02 && range >= 0.05
+        if let thresholds = userThresholds {
+            return stdDev >= thresholds.minStdDev && range >= thresholds.minRange
+        } else {
+            // Fallback to hardcoded values
+            return stdDev >= 0.02 && range >= 0.05
+        }
     }
 
     /**
@@ -134,7 +150,12 @@ class LivenessChecker {
      */
     private func hasRealisticDepthRange(mean: Float) -> Bool {
         // Real faces should be between 0.2 and 3.0 meters from the camera
-        return mean >= 0.2 && mean <= 3.0
+        if let thresholds = userThresholds {
+            return mean >= thresholds.minMeanDepth && mean <= thresholds.maxMeanDepth
+        } else {
+            // Fallback to hardcoded values
+            return mean >= 0.2 && mean <= 3.0
+        }
     }
 
     /**
@@ -143,8 +164,12 @@ class LivenessChecker {
      */
     private func hasNaturalEdgeVariation(edgeStdDev: Float) -> Bool {
         // Real faces should have natural edge variation
-        // Adjusted threshold to match main variation check
-        return edgeStdDev >= 0.02
+        if let thresholds = userThresholds {
+            return edgeStdDev >= thresholds.minEdgeStdDev
+        } else {
+            // Fallback to hardcoded values
+            return edgeStdDev >= 0.02
+        }
     }
 
     /**
@@ -153,8 +178,13 @@ class LivenessChecker {
      */
     private func hasNaturalDepthProfile(stdDev: Float, range: Float) -> Bool {
         // Real faces should have sufficient depth variation
-        // Adjusted thresholds to be more accommodating
-        return stdDev >= 0.02 || range >= 0.05
+        if let thresholds = userThresholds {
+            // Use OR logic as per original hardcoded check
+            return stdDev >= thresholds.minStdDev || range >= thresholds.minRange
+        } else {
+            // Fallback to hardcoded values
+            return stdDev >= 0.02 || range >= 0.05
+        }
     }
     
     /**
@@ -163,9 +193,12 @@ class LivenessChecker {
      */
     private func hasNaturalCenterVariation(centerStdDev: Float) -> Bool {
         // Real faces should have natural depth variations in the center
-        // Photos and masks tend to be flatter in the center
-        // Threshold based on empirical data
-        return centerStdDev >= 0.005
+        if let thresholds = userThresholds {
+            return centerStdDev >= thresholds.minCenterStdDev
+        } else {
+            // Fallback to hardcoded values
+            return centerStdDev >= 0.005
+        }
     }
     
     /**
@@ -202,8 +235,12 @@ class LivenessChecker {
      */
     private func hasNaturalGradientPattern(gradientMean: Float, gradientStdDev: Float) -> Bool {
         // Real faces should have natural gradient patterns
-        // Adjusted thresholds based on real face data
-        return gradientStdDev >= 0.001 && gradientMean <= 0.5
+        if let thresholds = userThresholds {
+            return gradientStdDev >= thresholds.minGradientStdDev && gradientMean <= thresholds.maxGradientMean
+        } else {
+            // Fallback to hardcoded values
+            return gradientStdDev >= 0.001 && gradientMean <= 0.5
+        }
     }
     
     /**
