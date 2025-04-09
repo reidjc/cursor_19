@@ -759,15 +759,43 @@ class CameraManager: NSObject, ObservableObject {
                      self.advanceEnrollmentState()
                  }
             // --- Liveness Test Logic ---
-            } else if shouldProcessForLivenessTest {
-                // Original liveness check logic (using FaceDetector's method which uses the results)
-                // Note: `checkLiveness` inside FaceDetector already calls performLivenessChecks
-                let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+            } else if shouldProcessForLivenessTest { 
+                // Perform initial check (uses user thresholds if available, otherwise hardcoded)
+                let isLiveWithCurrentThresholds = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+                var finalIsLive = isLiveWithCurrentThresholds
                 
-                // Update isLiveFace on main thread
-                DispatchQueue.main.async {
-                    self.isLiveFace = isLive
-                }
+                // --- Fallback Logic --- 
+                // If the check failed AND user thresholds were active, retry with hardcoded thresholds.
+                if !isLiveWithCurrentThresholds && self.persistedThresholds != nil {
+                    LogManager.shared.log("Info: Liveness check failed with user thresholds. Retrying with hardcoded thresholds.")
+                    
+                    // Temporarily clear user thresholds to force hardcoded values
+                    let originalThresholds = self.faceDetector.livenessChecker.userThresholds // Should match self.persistedThresholds
+                    self.faceDetector.livenessChecker.userThresholds = nil
+                    
+                    // Re-run the check without storing another result (just get boolean outcome)
+                    let isLiveWithHardcodedThresholds = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: false) 
+                    
+                    // Restore original thresholds
+                    self.faceDetector.livenessChecker.userThresholds = originalThresholds
+                    
+                    if isLiveWithHardcodedThresholds {
+                        LogManager.shared.log("Info: Fallback check with hardcoded thresholds PASSED.")
+                        finalIsLive = true // Override original failure if fallback passes
+                    } else {
+                        LogManager.shared.log("Info: Fallback check with hardcoded thresholds also FAILED.")
+                        // finalIsLive remains false
+                    }
+                } 
+                // --- End Fallback Logic ---
+                
+                 // Update isLiveFace on main thread using the final outcome
+                 DispatchQueue.main.async {
+                     // Only update if the state actually changed to avoid unnecessary UI refreshes
+                     if self.isLiveFace != finalIsLive {
+                         self.isLiveFace = finalIsLive
+                     }
+                 }
             }
         }
         DispatchQueue.global(qos: .userInitiated).async(execute: workItem)

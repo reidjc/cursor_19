@@ -56,6 +56,7 @@ struct ContentView: View {
         case failure    // A face was detected but determined to be a spoof
         case timeout    // No face was detected within the time limit
         case insufficientData  // Not enough depth data to make a determination
+        case fallbackSuccess // Passed only after falling back to hardcoded thresholds
     }
     
     /// Possible outcomes for the enrollment process
@@ -328,11 +329,19 @@ struct ContentView: View {
                 testResult = .success
                 stopTest()
             } else if timeRemaining <= 0 {
-                // Timeout condition
-                // Check if a face was ever detected during the test run
-                if cameraManager.faceWasDetectedThisTest { 
-                    // Face detected, but didn't pass (flag is false). Must be failure/spoof.
-                    testResult = .failure 
+                // --- Timeout Condition --- 
+                // Check the FINAL outcome after potential fallback
+                if cameraManager.isLiveFace { 
+                    // If isLiveFace is true, it means either the initial check passed
+                    // or the fallback check passed. Since we reached timeout, it implies
+                    // the initial check might have failed, but the fallback succeeded.
+                    // If the initial check succeeded, stopTest() would have been called earlier.
+                    // Therefore, reaching here with isLiveFace == true means fallback success.
+                    // (This assumes stopTest() correctly stops the timer and prevents this block execution on immediate success)
+                    testResult = .fallbackSuccess
+                } else if cameraManager.faceWasDetectedThisTest {
+                    // Face detected at some point, but final isLiveFace is false (both checks failed)
+                    testResult = .failure
                 } else {
                     // No face detected at all during the 5 seconds.
                     testResult = .timeout
@@ -475,6 +484,8 @@ struct ContentView: View {
             return "No Face Detected!"
         case .insufficientData:
             return "Insufficient Data!"
+        case .fallbackSuccess:
+            return "Real Face Detected (Fallback)" // More descriptive text
         }
     }
     
@@ -492,6 +503,8 @@ struct ContentView: View {
             return Color.red
         case .insufficientData:
             return Color.orange
+        case .fallbackSuccess:
+            return Color.orange // Use orange to indicate it wasn't a standard success
         }
     }
     

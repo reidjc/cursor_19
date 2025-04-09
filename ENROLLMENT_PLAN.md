@@ -84,8 +84,12 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
         *   Enroll a *new* face. Run the standard test again. Verify the test now uses the *personalized* thresholds (add logging in `LivenessChecker` to confirm which thresholds are being used). The test should ideally pass more reliably for the newly enrolled face.
         *   Test with spoofs (photos/videos) after enrollment to ensure the personalized thresholds are still effective at rejecting them (i.e., maintain security). Tune the threshold calculation (`k` factor) if necessary.
 
-9.  **Implement Fallback:**
-    *   If a standard liveness test (using depth + personalized thresholds) fails, provide an option or automatically trigger a fallback to the challenge/response mechanism (similar to the enrollment flow, but perhaps shorter/simpler, just proving liveness without saving data). This requires adding states to the main testing flow, not just enrollment. (Defer this implementation until the core enrollment and personalized threshold system works well).
+**Phase 3: Fallback and Refinement (Lower Priority/Future)**
+
+9.  **Implement Fallback:** (Revised Strategy - Completed)
+    *   Original Strategy: If depth+personalized test fails, fall back to separate challenge/response.
+    *   **Revised Strategy:** If a standard liveness test fails when using *personalized* thresholds, automatically re-run the check on the same data using the *hardcoded* thresholds. The test only fails overall if *both* checks fail. This avoids adding a separate C/R flow for now.
+    *   Requires modifying `CameraManager.depthDataOutput` to perform a second check if the first one fails with user thresholds.
 
 10. **Refine Threshold Calculation:**
     *   Based on testing results (especially false positives/negatives across different enrolled users), refine the threshold calculation strategy in step 6. Analyze the collected `TestResultData` for patterns. Maybe certain poses are more critical for specific thresholds? Maybe a weighted average is needed?
