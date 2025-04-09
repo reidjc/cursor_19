@@ -44,7 +44,7 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
     *   For each `.prompt...` state, wait a short duration (e.g., 1-2 seconds) before automatically transitioning to the corresponding `.capturing...` state.
     *   *Testing:* Manually trigger enrollment. Observe the UI prompts automatically cycling through the defined sequence (Center, Left, Right, Up, Down, Closer, Further, with pauses).
 
-5.  **Conditional Data Capture:**
+5.  **Conditional Data Capture:** (Completed)
     *   Modify the `depthDataOutput` delegate method in `CameraManager.swift`.
     *   Inside the method, check the current `enrollmentState`. Only proceed with depth data processing if the state is one of the `.capturing...` states.
     *   When in a `.capturing...` state, ensure a face is detected (`faceDetected` is true) before processing depth data for enrollment.

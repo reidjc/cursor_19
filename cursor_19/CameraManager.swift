@@ -72,6 +72,15 @@ class CameraManager: NSObject, ObservableObject {
     /// Timer work item for delayed state transitions during enrollment
     private var enrollmentTimerWorkItem: DispatchWorkItem?
     
+    /// Dictionary to store captured enrollment data (LivenessCheckResults per state)
+    private var capturedEnrollmentData: [EnrollmentState: [LivenessCheckResults]] = [:]
+    /// How many valid frames to capture for each pose during enrollment
+    private let framesNeededPerPose = 7 // Capture 7 frames per pose
+    /// Timeout for capturing data for a single pose
+    private let captureTimeout: TimeInterval = 10.0 // 10 seconds timeout per pose
+    /// Lock for thread-safe access to capturedEnrollmentData
+    private let enrollmentDataLock = NSLock()
+    
     // MARK: - Private Properties
     
     /// Queue for handling camera session operations
@@ -240,22 +249,35 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Test State Management
     
     /**
-     * Prepares the manager for a new liveness test.
+     * Resets the CameraManager state for a new enrollment or test.
      */
     func prepareForNewTest() {
-        // Reset state variables for the new test
-        faceDetected = false
-        isLiveFace = false
-        faceWasDetectedThisTest = false // Reset the tracking flag
-        isTestActive = true
-        
-        // Reset the FaceDetector and its components (including TestResultManager print flag)
+        LogManager.shared.log("Preparing for new test/enrollment...")
+        // Reset Face Detector (includes LivenessChecker state)
         faceDetector.resetForNewTest()
-        print("CameraManager prepared for new test.")
+        // Reset flags
+        faceDetected = false
+        isLiveFace = false 
+        faceWasDetectedThisTest = false
+        // Reset enrollment data if starting fresh
+        resetEnrollmentData()
+        // Activate test mode (enables depth processing etc.)
+        isTestActive = true 
+        LogManager.shared.log("CameraManager prepared.")
     }
-    
+
     /**
-     * Finalizes the current liveness test.
+     * Clears captured enrollment data.
+     */
+    private func resetEnrollmentData() {
+        enrollmentDataLock.lock()
+        capturedEnrollmentData.removeAll()
+        enrollmentDataLock.unlock()
+        LogManager.shared.log("Cleared captured enrollment data.")
+    }
+
+    /**
+     * Finalizes the current test or enrollment attempt.
      */
     func finalizeTest() {
         // Check if a face was ever detected during this test before resetting flags
@@ -315,9 +337,8 @@ class CameraManager: NSObject, ObservableObject {
             return
         }
         LogManager.shared.log("Enrollment sequence started.")
-        // Reset any previous results or states
-        // (ContentView already handles clearing its outcomes)
-        faceDetector.resetForNewTest() // Reset liveness checker state if needed
+        // Reset manager state (clears old results, resets flags, resets enrollment data)
+        prepareForNewTest()
         
         currentEnrollmentStepIndex = -1 // Reset index
         advanceEnrollmentState() // Start with the first step
@@ -371,16 +392,14 @@ class CameraManager: NSObject, ObservableObject {
                 
             case .capturingCenter, .capturingLeft, .capturingRight, .capturingUp, .capturingDown, .capturingCloser, .capturingFurther:
                 // Data capture logic (Step 1.5) will eventually trigger advanceEnrollmentState()
-                // For now, simulate successful capture after a short delay for testing purposes
-                #if DEBUG // Only include simulation in Debug builds
-                let workItem = DispatchWorkItem { [weak self] in
-                     LogManager.shared.log("Debug: Simulating capture complete for \(newState.rawValue)")
-                     self?.advanceEnrollmentState() // Move to the next step (next prompt or calculating)
+                // Start a timeout timer for this capture state
+                let timeoutWorkItem = DispatchWorkItem { [weak self] in
+                    guard let self = self, self.enrollmentState == newState else { return } // Only timeout if still in this state
+                    LogManager.shared.log("Error: Timeout occurred while capturing data for state \(newState.rawValue). Failing enrollment.")
+                    self.updateEnrollmentState(to: .enrollmentFailed)
                 }
-                self.enrollmentTimerWorkItem = workItem
-                // Make capture simulation slightly longer than prompt delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem) 
-                #endif
+                self.enrollmentTimerWorkItem = timeoutWorkItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.captureTimeout, execute: timeoutWorkItem)
                 
             case .calculatingThresholds:
                 // Threshold calculation (Step 2.6) will eventually transition state
@@ -485,8 +504,15 @@ class CameraManager: NSObject, ObservableObject {
     }
     
     func depthDataOutput(_ output: AVCaptureDepthDataOutput, didOutput depthData: AVDepthData, timestamp: CMTime, connection: AVCaptureConnection) {
-        // Only process depth data if a test is active AND a face has been detected
-        guard isTestActive, faceDetected else { 
+        // Or if we are in an enrollment capturing state AND a face is detected
+        let isEnrollingAndCapturing = [.capturingCenter, .capturingLeft, .capturingRight, 
+                                     .capturingUp, .capturingDown, .capturingCloser, 
+                                     .capturingFurther].contains(enrollmentState)
+                                     
+        let shouldProcessForLivenessTest = isTestActive && faceDetected && !isEnrollingAndCapturing
+        let shouldProcessForEnrollment = isEnrollingAndCapturing && faceDetected
+        
+        guard shouldProcessForLivenessTest || shouldProcessForEnrollment else {
             // If the test is active but no face is detected, print a debug message - REMOVED
             /*
             if isTestActive && !faceDetected {
@@ -502,13 +528,14 @@ class CameraManager: NSObject, ObservableObject {
             return 
         }
         
-        // Process depth data on background queue
+        // --- Process depth data on background queue ---
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             
             // Convert depth data to the right format
             let convertedDepthData = depthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
             let pixelBuffer = convertedDepthData.depthDataMap
+            let currentPoseState = self.enrollmentState // Capture state for logging/use
             
             // Convert depth data to array of Float values
             let depthValues = self.convertDepthDataToArray(pixelBuffer)
@@ -517,13 +544,39 @@ class CameraManager: NSObject, ObservableObject {
             // print("Depth data dimensions: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
             // print("Sampled points: \(depthValues.count)")
             
-            // Check liveness using FaceDetector
-            // Assuming checkLiveness now just returns Bool
-            let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+            // Perform the core liveness checks to get statistics
+            // Use the livenessChecker directly associated with the faceDetector
+            let checkResults = self.faceDetector.livenessChecker.performLivenessChecks(depthValues: depthValues)
             
-            // Update isLiveFace on main thread
-            DispatchQueue.main.async {
-                self.isLiveFace = isLive
+            // --- Enrollment Data Capture Logic ---
+            if shouldProcessForEnrollment {
+                 LogManager.shared.log("Debug: Processing frame for enrollment state: \(currentPoseState.rawValue)")
+                 
+                 self.enrollmentDataLock.lock()
+                 var currentDataForState = self.capturedEnrollmentData[currentPoseState] ?? []
+                 currentDataForState.append(checkResults)
+                 self.capturedEnrollmentData[currentPoseState] = currentDataForState
+                 let capturedCount = currentDataForState.count
+                 self.enrollmentDataLock.unlock()
+                 
+                 LogManager.shared.log("Debug: Captured frame \(capturedCount)/\(self.framesNeededPerPose) for \(currentPoseState.rawValue)")
+                 
+                 // Check if enough frames are collected for the current pose
+                 if capturedCount >= self.framesNeededPerPose {
+                     LogManager.shared.log("Info: Sufficient frames captured for \(currentPoseState.rawValue). Advancing state.")
+                     // Advance to the next state (e.g., next prompt or calculating)
+                     self.advanceEnrollmentState()
+                 }
+            // --- Liveness Test Logic ---
+            } else if shouldProcessForLivenessTest {
+                // Original liveness check logic (using FaceDetector's method which uses the results)
+                // Note: `checkLiveness` inside FaceDetector already calls performLivenessChecks
+                let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+                
+                // Update isLiveFace on main thread
+                DispatchQueue.main.async {
+                    self.isLiveFace = isLive
+                }
             }
         }
         DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
