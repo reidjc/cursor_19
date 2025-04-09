@@ -69,6 +69,9 @@ class CameraManager: NSObject, ObservableObject {
     /// Access to the face detector for test result analysis
     private(set) var faceDetector = FaceDetector()
     
+    /// Timer work item for delayed state transitions during enrollment
+    private var enrollmentTimerWorkItem: DispatchWorkItem?
+    
     // MARK: - Private Properties
     
     /// Queue for handling camera session operations
@@ -270,17 +273,146 @@ class CameraManager: NSObject, ObservableObject {
     
     // MARK: - Enrollment Sequence Control
     
+    // Define the sequence of poses required for enrollment
+    private let enrollmentSequence: [EnrollmentState] = [
+        .promptCenter,
+        .capturingCenter,
+        .promptLeft,
+        .capturingLeft,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptRight,
+        .capturingRight,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptUp,
+        .capturingUp,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptDown,
+        .capturingDown,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptCloser,
+        .capturingCloser,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptFurther,
+        .capturingFurther,
+        .promptCenter, // Final center pose
+        .capturingCenter,
+        .calculatingThresholds // Final step
+    ]
+    
+    private var currentEnrollmentStepIndex = -1
+    
     /**
      * Starts the user enrollment sequence.
-     * TODO: Implement the state transition logic.
      */
     func startEnrollmentSequence() {
-        // Placeholder implementation - will be filled in Step 1.4
-        LogManager.shared.log("Enrollment sequence started (Placeholder)")
-        // Initial state transition (Example - adjust based on actual logic)
-        // guard enrollmentState == .notEnrolled || enrollmentState == .enrollmentFailed else { return }
-        // enrollmentState = .promptCenter
+        guard enrollmentState == .notEnrolled || enrollmentState == .enrollmentFailed else {
+            LogManager.shared.log("Warning: Enrollment sequence requested but already in state \(enrollmentState.rawValue)")
+            return
+        }
+        LogManager.shared.log("Enrollment sequence started.")
+        // Reset any previous results or states
+        // (ContentView already handles clearing its outcomes)
+        faceDetector.resetForNewTest() // Reset liveness checker state if needed
+        
+        currentEnrollmentStepIndex = -1 // Reset index
+        advanceEnrollmentState() // Start with the first step
     }
+    
+    /**
+     * Advances the enrollment process to the next state in the sequence.
+     * Handles delays for prompt states and triggers next steps.
+     */
+    private func advanceEnrollmentState() {
+        // Cancel any pending timer from the previous state
+        enrollmentTimerWorkItem?.cancel()
+        
+        currentEnrollmentStepIndex += 1
+        
+        guard currentEnrollmentStepIndex < enrollmentSequence.count else {
+            // Reached the end of the defined sequence (should end on .calculatingThresholds)
+            LogManager.shared.log("Enrollment sequence index out of bounds. Completing.")
+            // This path shouldn't ideally be hit if sequence includes calculating
+            updateEnrollmentState(to: .calculatingThresholds) 
+            return
+        }
+        
+        let nextState = enrollmentSequence[currentEnrollmentStepIndex]
+        updateEnrollmentState(to: nextState)
+    }
+
+    /**
+     * Updates the enrollmentState on the main thread and handles timed transitions.
+     * - Parameter newState: The state to transition to.
+     */
+    private func updateEnrollmentState(to newState: EnrollmentState) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Avoid redundant updates
+            guard self.enrollmentState != newState else { return }
+            
+            self.enrollmentState = newState
+            LogManager.shared.log("Enrollment state changed to: \(newState.rawValue)")
+            
+            // Handle automatic transitions after delays
+            switch newState {
+            case .promptCenter, .promptLeft, .promptRight, .promptUp, .promptDown, .promptCloser, .promptFurther:
+                // Schedule transition to corresponding 'capturing' state after a delay
+                let workItem = DispatchWorkItem { [weak self] in
+                    self?.advanceEnrollmentState() // Move to the next step in the sequence (which should be a capturing state)
+                }
+                self.enrollmentTimerWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem) // 1.5 second delay
+                
+            case .capturingCenter, .capturingLeft, .capturingRight, .capturingUp, .capturingDown, .capturingCloser, .capturingFurther:
+                // Data capture logic (Step 1.5) will eventually trigger advanceEnrollmentState()
+                // For now, simulate successful capture after a short delay for testing purposes
+                #if DEBUG // Only include simulation in Debug builds
+                let workItem = DispatchWorkItem { [weak self] in
+                     LogManager.shared.log("Debug: Simulating capture complete for \(newState.rawValue)")
+                     self?.advanceEnrollmentState() // Move to the next step (next prompt or calculating)
+                }
+                self.enrollmentTimerWorkItem = workItem
+                // Make capture simulation slightly longer than prompt delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem) 
+                #endif
+                
+            case .calculatingThresholds:
+                // Threshold calculation (Step 2.6) will eventually transition state
+                // For now, simulate calculation and transition to complete after short delay
+                let workItem = DispatchWorkItem { [weak self] in
+                    LogManager.shared.log("Debug: Simulating threshold calculation complete.")
+                    self?.updateEnrollmentState(to: .enrollmentComplete) // Explicitly set final state
+                }
+                self.enrollmentTimerWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+                
+            case .enrollmentComplete, .enrollmentFailed, .notEnrolled:
+                // Final states, cancel any pending timers
+                self.enrollmentTimerWorkItem?.cancel()
+                self.currentEnrollmentStepIndex = -1 // Reset sequence progress
+            }
+        }
+    }
+    
+    /**
+     * Cancels the enrollment process, resetting the state.
+     */
+     func cancelEnrollment() {
+         enrollmentTimerWorkItem?.cancel()
+         currentEnrollmentStepIndex = -1
+         // Reset to .notEnrolled if it wasn't complete, otherwise keep .enrollmentComplete?
+         // Let's reset to failed for now if cancelled midway
+         if enrollmentState != .enrollmentComplete {
+             updateEnrollmentState(to: .enrollmentFailed) 
+         }
+         LogManager.shared.log("Enrollment sequence cancelled.")
+     }
     
     // MARK: - Depth Analysis
     

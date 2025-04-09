@@ -38,7 +38,7 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
     *   Display a success or failure message based on the final state (`.enrollmentComplete`, `.enrollmentFailed`).
     *   *Testing:* Manually launch the app. Verify the "Start Enrollment" button appears. Tap it and verify the text prompts change sequentially as you manually advance the state (initially, you might need debug buttons or code to force state transitions).
 
-4.  **Challenge Sequence Logic:**
+4.  **Challenge Sequence Logic:** (Completed)
     *   In `CameraManager` (or `EnrollmentManager`), implement the logic to transition through the `EnrollmentState` sequence when the "Start Enrollment" button is tapped.
     *   The sequence should be: Center -> Left -> Center -> Right -> Center -> Up -> Center -> Down -> Center -> Closer -> Center -> Further -> Center -> Calculate -> Complete/Fail. Returning to center between movements helps ensure distinct poses are captured.
     *   For each `.prompt...` state, wait a short duration (e.g., 1-2 seconds) before automatically transitioning to the corresponding `.capturing...` state.

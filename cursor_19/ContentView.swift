@@ -204,7 +204,8 @@ struct ContentView: View {
                                 
                 // Container for bottom elements
                 VStack(spacing: 15) {
-                    // Instruction / Status Text Area
+                    // Instruction / Status Text Area - REMOVED
+                    /*
                     if let instruction = instructionText {
                         Text(instruction)
                             .font(.headline)
@@ -213,27 +214,30 @@ struct ContentView: View {
                             .padding(.horizontal, 15)
                             .background(.ultraThinMaterial, in: Capsule())
                             // Use primary foreground for contrast on material
-                            .foregroundColor(.primary)
+                            .foregroundColor(.primary) 
                             .transition(.opacity.animation(.easeInOut))
                             // Add fixed height to prevent layout jumps? Maybe not needed if Spacer handles it.
-                            // .frame(height: 40)
+                            // .frame(height: 40) 
                     } else {
                         // Placeholder to maintain layout height when no text is shown
                         // Adjust height to match the approximate height of the text+padding
                         Spacer().frame(height: 30) // Adjust height as needed
                     }
+                    */
                     
                     // Single Button that changes appearance and action based on state
                     Button(action: { 
                         handleEnrollmentOrTestButtonTap()
                     }) { 
                         // Apply styling directly to the label content
-                        Text(actionButtonText) // Use computed property for text
+                        // Display instruction/timer text if available, otherwise action button text
+                        Text(instructionText ?? actionButtonText)
                         .font(.headline)
-                        .foregroundColor(.white)
+                        // Set text color: Green if capturing, white otherwise
+                        .foregroundColor(instructionTextColor == .green ? .green : .white)
                         .padding() // Padding inside the label's background
                         .frame(maxWidth: .infinity) // Frame applied to label
-                        // Background applied to label - Use gray when disabled
+                        // Background applied to label - Use gray when disabled, blue otherwise
                         .background(isActionButtonDisabled ? Color.gray : Color.blue)
                         .cornerRadius(15)
                     }
