@@ -2,6 +2,28 @@ import AVFoundation
 import SwiftUI
 import Combine
 
+// MARK: - Enrollment State Enum
+enum EnrollmentState: String { // Conforming to String for potential logging/debugging
+    case notEnrolled
+    case promptCenter
+    case capturingCenter
+    case promptLeft
+    case capturingLeft
+    case promptRight
+    case capturingRight
+    case promptUp
+    case capturingUp
+    case promptDown
+    case capturingDown
+    case promptCloser
+    case capturingCloser
+    case promptFurther
+    case capturingFurther
+    case calculatingThresholds
+    case enrollmentComplete
+    case enrollmentFailed
+}
+
 /**
  * CameraManager - Handles camera capture, face detection, and depth analysis
  *
@@ -37,6 +59,9 @@ class CameraManager: NSObject, ObservableObject {
     
     /// Controls whether face detection processing is active
     @Published var isTestActive = false
+    
+    /// Manages the current state of the user enrollment process
+    @Published var enrollmentState: EnrollmentState = .notEnrolled
     
     /// Flag to track if a face was seen at any point during the current test
     var faceWasDetectedThisTest = false

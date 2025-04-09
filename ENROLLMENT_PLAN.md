@@ -25,7 +25,7 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
     *   Copy this plan into the document for tracking.
     *   *Testing:* Verify the file exists and contains the plan.
 
-2.  **Enrollment State Management:**
+2.  **Enrollment State Management:** (Completed)
     *   Define an `enum EnrollmentState` to manage the steps of the enrollment process. Suggested states: `.notEnrolled`, `.promptCenter`, `.capturingCenter`, `.promptLeft`, `.capturingLeft`, `.promptRight`, `.capturingRight`, `.promptUp`, `.capturingUp`, `.promptDown`, `.capturingDown`, `.promptCloser`, `.capturingCloser`, `.promptFurther`, `.capturingFurther`, `.calculatingThresholds`, `.enrollmentComplete`, `.enrollmentFailed`.
     *   Add an `@Published var enrollmentState: EnrollmentState = .notEnrolled` property, likely within `CameraManager` or a new `EnrollmentManager` class. If creating a new manager, ensure `CameraManager` can interact with it.
     *   *Testing:* No direct test yet, this underpins subsequent steps.
