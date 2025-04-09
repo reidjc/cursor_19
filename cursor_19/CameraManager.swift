@@ -268,6 +268,20 @@ class CameraManager: NSObject, ObservableObject {
         print("CameraManager finalized test.")
     }
     
+    // MARK: - Enrollment Sequence Control
+    
+    /**
+     * Starts the user enrollment sequence.
+     * TODO: Implement the state transition logic.
+     */
+    func startEnrollmentSequence() {
+        // Placeholder implementation - will be filled in Step 1.4
+        LogManager.shared.log("Enrollment sequence started (Placeholder)")
+        // Initial state transition (Example - adjust based on actual logic)
+        // guard enrollmentState == .notEnrolled || enrollmentState == .enrollmentFailed else { return }
+        // enrollmentState = .promptCenter
+    }
+    
     // MARK: - Depth Analysis
     
     /**

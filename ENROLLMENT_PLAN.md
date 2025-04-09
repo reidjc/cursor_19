@@ -30,7 +30,7 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
     *   Add an `@Published var enrollmentState: EnrollmentState = .notEnrolled` property, likely within `CameraManager` or a new `EnrollmentManager` class. If creating a new manager, ensure `CameraManager` can interact with it.
     *   *Testing:* No direct test yet, this underpins subsequent steps.
 
-3.  **Basic Enrollment UI:**
+3.  **Basic Enrollment UI:** (Completed)
     *   Modify `ContentView.swift` (or the relevant UI view).
     *   When `enrollmentState` is `.notEnrolled`, show an "Start Enrollment" button instead of the usual "Start Test" button.
     *   During enrollment states (`.prompt...`, `.capturing...`), display simple text instructions based on the current `enrollmentState` (e.g., "Look straight ahead", "Turn head left", "Move phone closer"). Keep the rest of the UI (camera preview) the same.
