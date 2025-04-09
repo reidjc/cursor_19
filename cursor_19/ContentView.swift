@@ -262,6 +262,17 @@ struct ContentView: View {
                     .tint(.secondary) // Changed back from .gray for better visibility
                     .opacity(isTestRunning ? 0 : 1) // Hide when testing
                     .disabled(isTestRunning) // Disable when testing
+                    
+                    // Reset Enrollment Button (for testing)
+                    Button("Reset Enrollment") {
+                        cameraManager.resetEnrollment()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                    // Only show reset button if enrollment is complete or failed
+                    .opacity(cameraManager.enrollmentState == .enrollmentComplete || cameraManager.enrollmentState == .enrollmentFailed ? 1 : 0)
+                    .disabled(isTestRunning) // Also disable during test
+
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 30) // Bottom safe area padding

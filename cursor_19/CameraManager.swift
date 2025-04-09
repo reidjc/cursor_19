@@ -81,6 +81,12 @@ class CameraManager: NSObject, ObservableObject {
     /// Lock for thread-safe access to capturedEnrollmentData
     private let enrollmentDataLock = NSLock()
     
+    /// Holds the thresholds loaded from UserDefaults, if available
+    private var persistedThresholds: UserDepthThresholds?
+    
+    /// UserDefaults key for storing thresholds
+    private let userDefaultsKey = "userDepthThresholds"
+    
     // MARK: - Private Properties
     
     /// Queue for handling camera session operations
@@ -109,6 +115,16 @@ class CameraManager: NSObject, ObservableObject {
         case cannotAddInput        // Cannot add camera input to the session
         case cannotAddOutput       // Cannot add video/depth output to the session
         case createCaptureInput(Error) // Error creating camera input
+    }
+    
+    // MARK: - Initialization
+    override init() {
+        super.init()
+        // Attempt to load saved thresholds on initialization
+        self.persistedThresholds = loadThresholds()
+        // Set initial enrollment state based on loaded thresholds
+        self.enrollmentState = (self.persistedThresholds != nil) ? .enrollmentComplete : .notEnrolled
+        LogManager.shared.log("CameraManager initialized. Enrollment state: \(self.enrollmentState.rawValue)")
     }
     
     // MARK: - Camera Setup
@@ -406,8 +422,8 @@ class CameraManager: NSObject, ObservableObject {
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in // Perform calculation off main thread
                     guard let self = self else { return }
                     if let calculatedThresholds = self.calculateThresholds() {
-                        // TODO: Step 2.7 - Persist these thresholds
-                        // For now, just log and transition state
+                        // Persist the newly calculated thresholds
+                        self.saveThresholds(calculatedThresholds)
                         self.updateEnrollmentState(to: .enrollmentComplete)
                     } else {
                         LogManager.shared.log("Error: Threshold calculation failed.")
@@ -429,8 +445,9 @@ class CameraManager: NSObject, ObservableObject {
      func cancelEnrollment() {
          enrollmentTimerWorkItem?.cancel()
          currentEnrollmentStepIndex = -1
-         // Reset to .notEnrolled if it wasn't complete, otherwise keep .enrollmentComplete?
-         // Let's reset to failed for now if cancelled midway
+         // Reset state without clearing potentially saved thresholds
+         // If thresholds were calculated and saved, next launch should still find them.
+         // If cancelled mid-way, it will revert to .notEnrolled or .enrollmentFailed.
          if enrollmentState != .enrollmentComplete {
              updateEnrollmentState(to: .enrollmentFailed) 
          }
@@ -538,6 +555,67 @@ class CameraManager: NSObject, ObservableObject {
         let standardDeviation = sqrt(variance)
         
         return (mean, standardDeviation)
+    }
+    
+    // MARK: - Persistence (UserDefaults)
+    
+    /**
+     * Saves the provided thresholds to UserDefaults.
+     */
+    private func saveThresholds(_ thresholds: UserDepthThresholds) {
+        let encoder = JSONEncoder()
+        do {
+            let data = try encoder.encode(thresholds)
+            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+            LogManager.shared.log("Successfully saved user thresholds to UserDefaults.")
+            // Update the in-memory persisted thresholds as well
+            self.persistedThresholds = thresholds
+        } catch {
+            LogManager.shared.log("Error: Failed to encode or save user thresholds: \(error.localizedDescription)")
+        }
+    }
+    
+    /**
+     * Loads thresholds from UserDefaults.
+     * - Returns: The loaded `UserDepthThresholds` or nil if not found or decoding fails.
+     */
+    private func loadThresholds() -> UserDepthThresholds? {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey) else {
+            LogManager.shared.log("Info: No saved user thresholds found in UserDefaults.")
+            return nil
+        }
+        
+        let decoder = JSONDecoder()
+        do {
+            let thresholds = try decoder.decode(UserDepthThresholds.self, from: data)
+            LogManager.shared.log("Successfully loaded user thresholds from UserDefaults.")
+            thresholds.logSummary() // Log loaded thresholds for confirmation
+            return thresholds
+        } catch {
+            LogManager.shared.log("Error: Failed to decode user thresholds from UserDefaults: \(error.localizedDescription). Clearing invalid data.")
+            // Clear invalid data to prevent repeated errors
+            clearSavedThresholds()
+            return nil
+        }
+    }
+    
+    /**
+     * Clears any saved thresholds from UserDefaults and resets in-memory state.
+     */
+    private func clearSavedThresholds() {
+        UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+        self.persistedThresholds = nil
+        LogManager.shared.log("Cleared saved user thresholds from UserDefaults.")
+    }
+    
+    /**
+     * Public method to reset enrollment: clears saved data and resets state.
+     */
+    func resetEnrollment() {
+        LogManager.shared.log("Resetting enrollment...")
+        clearSavedThresholds()
+        // Update state to reflect that enrollment is now needed
+        updateEnrollmentState(to: .notEnrolled)
     }
     
     // MARK: - Depth Analysis

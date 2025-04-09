@@ -67,7 +67,7 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
     *   Call this function when the enrollment sequence reaches the `.calculatingThresholds` state. Transition to `.enrollmentComplete` if successful, `.enrollmentFailed` otherwise.
     *   *Testing:* Add logging to output the captured statistics for each pose and the final calculated `UserDepthThresholds`. Manually inspect these values to see if they seem reasonable (e.g., are the ranges plausible?). Perform the enrollment process multiple times under slightly different conditions (lighting, distance) and see how the thresholds vary.
 
-7.  **Persistence:**
+7.  **Persistence:** (Completed)
     *   Add capability to save the calculated `UserDepthThresholds` to `UserDefaults` (or another persistent store). Use `JSONEncoder` since the struct is `Codable`.
     *   Add capability to load thresholds on app startup. Add a flag or check to see if thresholds exist.
     *   Update the initial state logic: If thresholds are loaded successfully, set `enrollmentState` to `.enrollmentComplete` directly, otherwise set to `.notEnrolled`.
