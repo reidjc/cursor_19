@@ -10,6 +10,9 @@ A SwiftUI-based iOS application that uses the TrueDepth camera to detect and ver
 - Test history tracking with timestamps
 - Support for both light and dark mode
 - Comprehensive error handling and user feedback
+- User enrollment and personalized thresholds
+- Fallback mechanism if liveness check fails with personalized thresholds
+- Spoof detection to reject presentation attacks
 
 ## Requirements
 
@@ -76,10 +79,8 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 #### Optional Checks
 
 1. **Depth Variation**
-   - Purpose: Ensures the face has natural depth variation
-   - Thresholds:
-     - Standard deviation ≥ 0.15
-     - Depth range ≥ 0.3 meters
+   - Purpose: Ensures the face has sufficient overall depth variation
+   - Thresholds: Checks `stdDev` and `range` against personalized or hardcoded minimums
    - Why: Real faces have natural depth variations, while photos are typically flat
 
 2. **Depth Distribution**
@@ -89,9 +90,7 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 3. **Gradient Pattern**
    - Purpose: Checks for natural depth gradient patterns
-   - Thresholds:
-     - Gradient standard deviation ≥ 0.005
-     - Gradient mean ≤ 0.2
+   - Thresholds: Checks `gradientStdDev` (>= min) and `gradientMean` (<= max) against personalized or hardcoded thresholds
    - Why: Real faces have natural depth gradients
 
 4. **Temporal Consistency**
@@ -109,10 +108,12 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 ### Test Result Requirements
 
-A face is considered "live" if it meets ALL of the following criteria:
-1. Has at least 30 valid depth samples
+A face is considered "live" if it meets ALL of the following criteria during the test window:
+1. Has enough valid depth samples (typically 100 from a 10x10 grid)
 2. Passes all 4 mandatory checks
 3. Passes at least 3 out of 5 optional checks
+
+*If the above criteria are not met within the time limit using personalized thresholds, a fallback check using hardcoded thresholds is performed on the last frame.*
 
 ### Debug Output
 
@@ -126,11 +127,7 @@ The app provides detailed debug information including:
 
 ## Technical Details
 
-The liveness detection system uses a combination of mandatory and optional checks:
-- Mandatory checks must all pass for a face to be considered live
-- At least 3 out of 5 optional checks must pass
-- Minimum of 30 depth samples required for analysis
-- Real-time processing of depth data at 10x10 sampling grid
+The system uses `AVFoundation` for camera capture (including depth data) and `Vision` for face detection. Liveness logic resides primarily in `LivenessChecker.swift`, using thresholds calculated in `CameraManager.swift`. Personalized thresholds are stored in `UserDefaults`. Enrollment and test states are managed via `EnrollmentState` enum and UI logic in `ContentView.swift`.
 
 ## License
 
