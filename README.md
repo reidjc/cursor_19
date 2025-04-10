@@ -60,27 +60,27 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 2. **Center Variation**
    - Purpose: Verifies natural depth variation in face center
    - Thresholds:
-     - Center standard deviation ≥ 0.1
+     - Center standard deviation ≥ 0.005 (*Hardcoded fallback value*)
    - Why: Real faces have natural depth variations in the center region
 
 3. **Edge Variation**
    - Purpose: Checks for natural depth transitions at face edges
    - Thresholds:
-     - Edge standard deviation ≥ 0.15
+     - Edge standard deviation ≥ 0.02 (*Hardcoded fallback value*)
    - Why: Real faces have soft edges, while photos often have sharp edges
 
 4. **Depth Profile**
    - Purpose: Analyzes natural depth profile across the face
    - Thresholds:
-     - Standard deviation ≥ 0.2 OR
-     - Depth range ≥ 0.4 meters
+     - Standard deviation ≥ 0.02 OR
+     - Depth range ≥ 0.05 meters (*Hardcoded fallback values*)
    - Why: Real faces have natural depth profiles, while photos are uniform
 
 #### Optional Checks
 
 1. **Depth Variation**
    - Purpose: Ensures the face has sufficient overall depth variation
-   - Thresholds: Checks `stdDev` and `range` against personalized or hardcoded minimums
+   - Thresholds: `stdDev ≥ 0.02` AND `range ≥ 0.05` (*Hardcoded fallback values*). Checks against personalized or hardcoded minimums
    - Why: Real faces have natural depth variations, while photos are typically flat
 
 2. **Depth Distribution**
@@ -90,7 +90,7 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 3. **Gradient Pattern**
    - Purpose: Checks for natural depth gradient patterns
-   - Thresholds: Checks `gradientStdDev` (>= min) and `gradientMean` (<= max) against personalized or hardcoded thresholds
+   - Thresholds: `gradientStdDev ≥ 0.001` AND `gradientMean ≤ 0.5` (*Hardcoded fallback values*). Checks against personalized or hardcoded thresholds
    - Why: Real faces have natural depth gradients
 
 4. **Temporal Consistency**
