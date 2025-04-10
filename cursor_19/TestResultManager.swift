@@ -98,7 +98,7 @@ class TestResultManager {
             testId: managerTestId
         )
         
-        // Set the success flag *before* potentially returning due to hasPrintedCurrentTest
+        // Set the success flag ONLY when logging the first result for this test
         if isLive {
             self.currentTestWasSuccessful = true
         }

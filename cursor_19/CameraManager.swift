@@ -511,18 +511,51 @@ class CameraManager: NSObject, ObservableObject {
         }
         if closerResults.count >= minFramesPerPose, let closerStats = calculateMetricStats(from: closerResults, poseName: "Closer") {
              poseStatsList.append(closerStats)
+             LogManager.shared.log("Included Closer pose data in threshold calculation.")
+        } else {
+            LogManager.shared.log("Warning: Insufficient Closer pose data (\(closerResults.count) < \(minFramesPerPose)). Skipping for threshold calculation.")
         }
         if furtherResults.count >= minFramesPerPose, let furtherStats = calculateMetricStats(from: furtherResults, poseName: "Further") {
              poseStatsList.append(furtherStats)
+             LogManager.shared.log("Included Further pose data in threshold calculation.")
+        } else {
+             LogManager.shared.log("Warning: Insufficient Further pose data (\(furtherResults.count) < \(minFramesPerPose)). Skipping for threshold calculation.")
         }
         
         guard !poseStatsList.isEmpty else {
-            LogManager.shared.log("Error: Could not calculate statistics for any pose.")
+            LogManager.shared.log("Error: Could not calculate statistics for any valid pose.")
             return nil // Should be prevented by initial centerResults check, but good practice
         }
         
         // --- Combine stats to get overall min/max bounds --- 
-        let k: Float = 2.0 // Multiplier for std dev range (tunable parameter)
+        
+        // Gather all raw metric values from included poses
+        let allResults = poseStatsList.flatMap { _ in 
+            // Need to re-access the original data based on which poses were included
+            // This is inefficient, better to pass the actual results used for stats
+            // Let's refactor calculateMetricStats to return raw values or modify approach.
+            // --- REVISED APPROACH: Calculate min/max observed directly --- 
+            [] as [LivenessCheckResults] // Placeholder - will be replaced below
+        }
+        enrollmentDataLock.lock()
+        var allCombinedResults: [LivenessCheckResults] = []
+        if centerResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: centerResults) }
+        if closerResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: closerResults) }
+        if furtherResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: furtherResults) }
+        enrollmentDataLock.unlock()
+
+        guard !allCombinedResults.isEmpty else {
+            LogManager.shared.log("Error: No combined results available for min/max observed calculation.")
+            return nil
+        }
+
+        let allMeans = allCombinedResults.map { $0.mean }
+        let allStdDevs = allCombinedResults.map { $0.stdDev }
+        let allRanges = allCombinedResults.map { $0.range }
+        let allEdgeStdDevs = allCombinedResults.map { $0.edgeStdDev }
+        let allCenterStdDevs = allCombinedResults.map { $0.centerStdDev }
+        let allGradientMeans = allCombinedResults.map { $0.gradientMean }
+        let allGradientStdDevs = allCombinedResults.map { $0.gradientStdDev }
         
         // Helper to get min/max bounds for a metric across poses
         func getBounds( 
@@ -532,13 +565,27 @@ class CameraManager: NSObject, ObservableObject {
             absoluteClampMax: Float? = nil,
             hardcodedRef: Float // Original hardcoded value for clamping logic
         ) -> Float {
+            let k: Float = 2.0 // Multiplier for std dev range (tunable parameter)
             let bounds = poseStatsList.map { stats -> Float in
                 let (mean, stdDev) = valueExtractor(stats)
                 // Ensure stdDev is non-negative before potentially subtracting
                 let safeStdDev = max(0, stdDev) 
                 switch boundType {
-                case .min: return mean - k * safeStdDev
-                case .max: return mean + k * safeStdDev
+                case .min:
+                    var finalBound = mean - k * safeStdDev
+                    // Clamp: Don't let personalized min be *less strict* (lower) than hardcoded.
+                    // Take the HIGHER (stricter) of the calculated bound and the hardcoded reference.
+                    // Also apply absolute floor.
+                    finalBound = max(finalBound, hardcodedRef)
+                    if let clamp = absoluteClampMin { finalBound = max(clamp, finalBound) }
+                    return finalBound
+                case .max:
+                    var finalBound = mean + k * safeStdDev
+                    // Clamp: Don't let personalized max be *less strict* (higher) than hardcoded.
+                    // Take the LOWER (stricter) of the calculated bound and the hardcoded reference.
+                    finalBound = min(finalBound, hardcodedRef)
+                    if let clamp = absoluteClampMax { finalBound = min(clamp, finalBound) }
+                    return finalBound
                 }
             }
             
@@ -546,15 +593,16 @@ class CameraManager: NSObject, ObservableObject {
             switch boundType {
             case .min:
                 finalBound = bounds.min() ?? hardcodedRef // Fallback to hardcoded if no bounds calculated
-                // Clamp: Don't let personalized min be *stricter* than hardcoded, but allow it to be *more lenient*
-                // Also apply absolute floor
-                finalBound = min(finalBound, hardcodedRef) 
+                // Clamp: Don't let personalized min be *less strict* (lower) than hardcoded.
+                // Take the HIGHER (stricter) of the calculated bound and the hardcoded reference.
+                // Also apply absolute floor.
+                finalBound = max(finalBound, hardcodedRef)
                 if let clamp = absoluteClampMin { finalBound = max(clamp, finalBound) }
             case .max:
                 finalBound = bounds.max() ?? hardcodedRef // Fallback to hardcoded
-                // Clamp: Don't let personalized max be *stricter* (lower) than hardcoded, but allow it to be *higher*
-                // Also apply absolute ceiling
-                finalBound = max(finalBound, hardcodedRef)
+                // Clamp: Don't let personalized max be *less strict* (higher) than hardcoded.
+                // Take the LOWER (stricter) of the calculated bound and the hardcoded reference.
+                finalBound = min(finalBound, hardcodedRef)
                 if let clamp = absoluteClampMax { finalBound = min(clamp, finalBound) }
             }
             return finalBound
@@ -562,39 +610,39 @@ class CameraManager: NSObject, ObservableObject {
 
         enum ThresholdBoundType { case min, max }
 
-        // --- Calculate final thresholds --- 
+        // --- Calculate final thresholds (Using Min Observed for Lower Bounds) --- 
         
         // Mean Depth Range: Use observed min/max across included poses, clamped
-        let minObserved = poseStatsList.map { $0.minObservedMean }.min() ?? 0.2
-        let maxObserved = poseStatsList.map { $0.maxObservedMean }.max() ?? 3.0
+        let minObservedMeanOverall = allMeans.min() ?? 0.2
+        let maxObservedMeanOverall = allMeans.max() ?? 3.0
         // Define range based on observed min/max during enrollment, plus buffer, clamped
         let buffer: Float = 0.1 // 10cm buffer
-        let minMeanDepth = max(0.15, minObserved - buffer) // Clamp floor at 15cm
-        let maxMeanDepth = min(3.5, maxObserved + buffer) // Clamp ceiling at 3.5m
+        let minMeanDepth = max(0.15, minObservedMeanOverall - buffer) // Clamp floor at 15cm
+        let maxMeanDepth = min(3.5, maxObservedMeanOverall + buffer) // Clamp ceiling at 3.5m
 
-        // Min Standard Deviation (Lower bound: mean - k*stddev, clamped at > 0)
-        let minStdDev = getBounds(valueExtractor: { ($0.meanOfStdDevs, $0.stdDevOfStdDevs) }, 
-                                  boundType: .min, 
-                                  absoluteClampMin: 0.001, 
-                                  hardcodedRef: 0.02) // Original hardcoded value
+        // Min Standard Deviation (Lower bound: min observed - buffer, clamped by hardcoded min)
+        let hardcodedMinStdDev: Float = 0.02
+        let minObservedStdDev = allStdDevs.min() ?? hardcodedMinStdDev
+        let minStdDevBuffer: Float = max(0.001, minObservedStdDev * 0.15) // 15% buffer or 0.001
+        let minStdDev = max(hardcodedMinStdDev, minObservedStdDev - minStdDevBuffer)
 
         // Min Range (Similar to StdDev)
-        let minRange = getBounds(valueExtractor: { ($0.meanOfRanges, $0.stdDevOfRanges) }, 
-                                 boundType: .min, 
-                                 absoluteClampMin: 0.001, 
-                                 hardcodedRef: 0.05) // Original hardcoded value
+        let hardcodedMinRange: Float = 0.05
+        let minObservedRange = allRanges.min() ?? hardcodedMinRange
+        let minRangeBuffer: Float = max(0.005, minObservedRange * 0.15) // 15% buffer or 0.005
+        let minRange = max(hardcodedMinRange, minObservedRange - minRangeBuffer)
 
         // Min Edge StdDev (Similar to StdDev)
-        let minEdgeStdDev = getBounds(valueExtractor: { ($0.meanOfEdgeStdDevs, $0.stdDevOfEdgeStdDevs) }, 
-                                    boundType: .min, 
-                                    absoluteClampMin: 0.001, 
-                                    hardcodedRef: 0.02) // Original hardcoded value
+        let hardcodedMinEdgeStdDev: Float = 0.02
+        let minObservedEdgeStdDev = allEdgeStdDevs.min() ?? hardcodedMinEdgeStdDev
+        let minEdgeStdDevBuffer: Float = max(0.001, minObservedEdgeStdDev * 0.15)
+        let minEdgeStdDev = max(hardcodedMinEdgeStdDev, minObservedEdgeStdDev - minEdgeStdDevBuffer)
 
         // Min Center StdDev (Similar to StdDev)
-        let minCenterStdDev = getBounds(valueExtractor: { ($0.meanOfCenterStdDevs, $0.stdDevOfCenterStdDevs) }, 
-                                      boundType: .min, 
-                                      absoluteClampMin: 0.001, 
-                                      hardcodedRef: 0.005) // Original hardcoded value
+        let hardcodedMinCenterStdDev: Float = 0.005
+        let minObservedCenterStdDev = allCenterStdDevs.min() ?? hardcodedMinCenterStdDev
+        let minCenterStdDevBuffer: Float = max(0.0005, minObservedCenterStdDev * 0.15)
+        let minCenterStdDev = max(hardcodedMinCenterStdDev, minObservedCenterStdDev - minCenterStdDevBuffer)
 
         // Max Gradient Mean (Upper bound: mean + k*stddev)
         let maxGradientMean = getBounds(valueExtractor: { ($0.meanOfGradientMeans, $0.stdDevOfGradientMeans) }, 
@@ -603,10 +651,10 @@ class CameraManager: NSObject, ObservableObject {
                                       hardcodedRef: 0.5) // Original hardcoded value
 
         // Min Gradient StdDev (Similar to StdDev)
-        let minGradientStdDev = getBounds(valueExtractor: { ($0.meanOfGradientStdDevs, $0.stdDevOfGradientStdDevs) }, 
-                                        boundType: .min, 
-                                        absoluteClampMin: 0.0001, 
-                                        hardcodedRef: 0.001) // Original hardcoded value
+        let hardcodedMinGradStdDev: Float = 0.001
+        let minObservedGradStdDev = allGradientStdDevs.min() ?? hardcodedMinGradStdDev
+        let minGradStdDevBuffer: Float = max(0.0001, minObservedGradStdDev * 0.15)
+        let minGradientStdDev = max(hardcodedMinGradStdDev, minObservedGradStdDev - minGradStdDevBuffer)
         
         let thresholds = UserDepthThresholds(
             minMeanDepth: minMeanDepth,
@@ -857,6 +905,9 @@ class CameraManager: NSObject, ObservableObject {
             let pixelBuffer = convertedDepthData.depthDataMap
             let currentPoseState = self.enrollmentState // Capture state for logging/use
             
+            // Store the latest depth values before performing checks
+            self.lastProcessedDepthValues = self.convertDepthDataToArray(pixelBuffer)
+            
             // Convert depth data to array of Float values
             let depthValues = self.convertDepthDataToArray(pixelBuffer)
             
@@ -898,9 +949,12 @@ class CameraManager: NSObject, ObservableObject {
                      // Only update if the state actually changed to avoid unnecessary UI refreshes
                      if self.isLiveFace != finalIsLive {
                          self.isLiveFace = finalIsLive
-                         self.lastProcessedDepthValues = depthValues
                      }
                  }
+
+                // Also update lastProcessedDepthValues when isLiveFace is set
+                // Ensure we have the data associated with the final UI state
+                self.lastProcessedDepthValues = depthValues
             }
         }
         DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
@@ -919,7 +973,6 @@ class CameraManager: NSObject, ObservableObject {
         
         guard self.persistedThresholds != nil else {
              LogManager.shared.log("Warning: Fallback check requested, but no user thresholds were active initially.")
-             // This shouldn't happen based on ContentView logic, but good to check.
              return false 
         }
 

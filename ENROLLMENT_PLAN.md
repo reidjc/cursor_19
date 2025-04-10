@@ -84,17 +84,16 @@ Based on `LivenessChecker.swift`, the following statistics will be captured duri
         *   Enroll a *new* face. Run the standard test again. Verify the test now uses the *personalized* thresholds (add logging in `LivenessChecker` to confirm which thresholds are being used). The test should ideally pass more reliably for the newly enrolled face.
         *   Test with spoofs (photos/videos) after enrollment to ensure the personalized thresholds are still effective at rejecting them (i.e., maintain security). Tune the threshold calculation (`k` factor) if necessary.
 
-**Phase 3: Fallback and Refinement (Lower Priority/Future)**
-
 9.  **Implement Fallback:** (Revised Strategy - Completed)
     *   Original Strategy: If depth+personalized test fails, fall back to separate challenge/response.
     *   **Revised Strategy:** If a standard liveness test fails when using *personalized* thresholds, automatically re-run the check on the same data using the *hardcoded* thresholds. The test only fails overall if *both* checks fail. This avoids adding a separate C/R flow for now.
     *   Requires modifying `CameraManager.depthDataOutput` to perform a second check if the first one fails with user thresholds.
 
-10. **Refine Threshold Calculation:**
+10. **Refine Threshold Calculation:** (Completed - Combined Pose Data Strategy)
     *   Based on testing results (especially false positives/negatives across different enrolled users), refine the threshold calculation strategy in step 6. Analyze the collected `TestResultData` for patterns. Maybe certain poses are more critical for specific thresholds? Maybe a weighted average is needed?
+    *   **Implemented Strategy:** Modified `calculateThresholds` to use data from Center, Closer, and Further poses. Calculated statistics separately for each valid pose dataset. Derived final thresholds using min-of-minimums and max-of-maximums across datasets, with clamping against hardcoded values to prevent thresholds from becoming less strict. This improved robustness to distance variations.
     *   **Alternative Strategies to Explore:**
-        *   **Combined Pose Data:** Calculate stats for Center, Close, and Far poses separately. Derive final thresholds by taking the min-of-minimums and max-of-maximums across these poses to establish a broader acceptable range that accounts for distance variation without needing a dynamic model.
+        *   ~~**Combined Pose Data:**~~ (Superseded by implemented strategy)
         *   **Percentile-Based:** Instead of mean/stddev, use percentiles (e.g., 5th percentile for minimums, 95th for maximums) based on the collected data (either center-only or combined).
         *   **Clamping:** Ensure calculated thresholds don't become excessively strict or lenient by clamping them relative to the original hardcoded values (e.g., `finalMin = max(hardcodedMin, calculatedMin)`).
         *   **Distance Scaling Model:** Explicitly model how thresholds should change based on the measured distance during the live test, using the close/center/far enrollment data to define the scaling factor.

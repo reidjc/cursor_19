@@ -57,6 +57,7 @@ struct ContentView: View {
         case timeout    // No face was detected within the time limit
         case insufficientData  // Not enough depth data to make a determination
         case fallbackSuccess // Passed only after falling back to hardcoded thresholds
+        case fallbackFailure // Failed *even after* falling back to hardcoded thresholds
     }
     
     /// Possible outcomes for the enrollment process
@@ -322,37 +323,44 @@ struct ContentView: View {
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] _ in
             timeRemaining -= 0.1
             
-            // Check if the CameraManager reports a live face based on the latest frame check
-            if cameraManager.isLiveFace { 
-                // Note: isLiveFace could be true due to either user or hardcoded thresholds passing in CameraManager.
-                // We consider any pass during the timer as a primary success.
-                testResult = .success
-                stopTest()
-            } else if timeRemaining <= 0 {
-                // --- Timeout Condition --- 
-                if cameraManager.faceWasDetectedThisTest {
-                    // Face detected, but failed initial checks. Try fallback.
-                    if cameraManager.persistedThresholds != nil { // Only fallback if user thresholds were active
-                        LogManager.shared.log("Info: Test timed out with user thresholds. Performing fallback check...")
-                        if cameraManager.performHardcodedFallbackCheck() {
-                            testResult = .fallbackSuccess
-                            LogManager.shared.log("Info: Fallback check PASSED.")
-                        } else {
-                            testResult = .failure // Both checks failed
-                            LogManager.shared.log("Info: Fallback check FAILED.")
-                        }
-                    } else {
-                        // No user thresholds, so initial failure is final
-                        testResult = .failure
-                    }
-                } else {
-                    // No face detected at all during the 5 seconds.
-                    testResult = .timeout
-                }
-                stopTest()
-            }
-        }
-    }
+            // Log the flag value being checked
+            LogManager.shared.log("Debug Timer Check: currentTestWasSuccessful = \(cameraManager.faceDetector.testResultManager.currentTestWasSuccessful)")
+            
+            // Check if the *authoritative* result manager has flagged success for this test run
+            if cameraManager.faceDetector.testResultManager.currentTestWasSuccessful {
+                 // This flag is set only when TestResultManager logs a definitive ✅ LIVE result.
+                 testResult = .success
+                 stopTest()
+             } else if timeRemaining <= 0 {
+                  // --- Timeout Condition ---
+                  LogManager.shared.log("Debug Timeout: Checking faceWasDetectedThisTest = \(cameraManager.faceWasDetectedThisTest)")
+                  if cameraManager.faceWasDetectedThisTest {
+                      // Face detected, but failed initial checks. Try fallback.
+                      LogManager.shared.log("Debug Timeout: faceWasDetectedThisTest is TRUE. Checking for persisted thresholds...")
+                      if cameraManager.persistedThresholds != nil { // Only fallback if user thresholds were active
+                          LogManager.shared.log("Info: Test timed out with user thresholds. Performing fallback check...")
+                          if cameraManager.performHardcodedFallbackCheck() { // Check 3: Fallback passes
+                              LogManager.shared.log("Info: Fallback check PASSED.")
+                              testResult = .fallbackSuccess
+                          } else {
+                              LogManager.shared.log("Debug: Assigning testResult = .failure (Fallback Failed)")
+                              testResult = .fallbackFailure
+                              LogManager.shared.log("Info: Fallback check FAILED.")
+                          }
+                      } else { // User thresholds were NOT active
+                          LogManager.shared.log("Debug Timeout: persistedThresholds is NIL.")
+                          LogManager.shared.log("Debug: Assigning testResult = .failure (No User Thresholds)")
+                          testResult = .failure
+                      }
+                   } else { // No face detected during test
+                      LogManager.shared.log("Debug Timeout: faceWasDetectedThisTest is FALSE.")
+                      LogManager.shared.log("Debug: Assigning testResult = .timeout")
+                      testResult = .timeout
+                   }
+                  stopTest()
+              }
+          }
+      }
     
     /**
      * Stops the current liveness test.
@@ -488,6 +496,8 @@ struct ContentView: View {
             return "Insufficient Data!"
         case .fallbackSuccess:
             return "Real Face Detected (Fallback)" // More descriptive text
+        case .fallbackFailure:
+            return "Spoof Detected (Fallback)" // More descriptive text
         }
     }
     
@@ -507,6 +517,8 @@ struct ContentView: View {
             return Color.orange
         case .fallbackSuccess:
             return Color.orange // Use orange to indicate it wasn't a standard success
+        case .fallbackFailure:
+            return Color.orange.opacity(0.8) // Use dark orange for fallback failure?
         }
     }
     
