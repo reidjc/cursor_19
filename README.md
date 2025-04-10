@@ -34,6 +34,9 @@ A SwiftUI-based iOS application that uses the TrueDepth camera to detect and ver
 3. Position your face within the frame
 4. The app will automatically detect your face and perform liveness checks
 5. Results will be displayed in real-time with detailed statistics
+6. **View Results:** The result (success, failure, timeout, fallback success, fallback failure) is displayed prominently.
+7. **(Optional) Share Logs:** Use the share button to export detailed session logs.
+8. **(Optional) Reset Enrollment:** Use the reset button (visible after enrollment) to clear personalized thresholds and re-enroll.
 
 ## Liveness Detection System
 
@@ -141,3 +144,29 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Inspired by concepts and best practices for liveness detection discussed in documentation for Google's ML Kit and Apple's Vision framework.
 - This project utilizes Apple's Vision framework for face detection.
+
+## How it Works
+
+1.  **Enrollment (First Use or After Reset):**
+    *   The user is guided through a sequence of poses (looking center, left, right, up, down, moving closer, moving further).
+    *   During specific poses (`.capturing...`), depth data and facial geometry statistics are captured using `AVFoundation` and `Vision`.
+    *   Based on the captured data (primarily from center, closer, and further poses), personalized thresholds for various liveness checks are calculated using the "Combined Pose Data" strategy (min-observed for minimums, clamped by hardcoded values).
+    *   These thresholds are saved locally using `UserDefaults`.
+
+2.  **Liveness Test (After Enrollment):**
+    *   The user taps "Start Liveness Test".
+    *   A 5-second countdown begins.
+    *   The app continuously processes depth frames from the TrueDepth camera.
+    *   For each frame, the `LivenessChecker` performs a series of checks using the **user's personalized thresholds** (or hardcoded if enrollment hasn't happened).
+    *   If a frame passes all mandatory checks and enough optional checks (`TestResultManager.currentTestWasSuccessful` becomes true), the test stops immediately with a "Real Face Detected!" result.
+    *   If the timer expires without success:
+        *   If a face was detected during the test (`faceWasDetectedThisTest` is true):
+            *   If personalized thresholds were used, a **fallback check** is performed on the last frame using *hardcoded* thresholds.
+                *   If the fallback passes, the result is "Real Face Detected (Fallback)".
+                *   If the fallback also fails, the result is "Spoof Detected (Fallback)".
+            *   If hardcoded thresholds were used initially (no enrollment), the result is "Spoof Detected!".
+        *   If no face was detected during the 5 seconds, the result is "No Face Detected!".
+
+## Key Liveness Checks
+
+The system performs several checks on the depth data. Personalized thresholds are used if available (from enrollment); otherwise, hardcoded baseline values are used.
