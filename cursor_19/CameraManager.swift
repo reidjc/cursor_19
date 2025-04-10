@@ -2,6 +2,28 @@ import AVFoundation
 import SwiftUI
 import Combine
 
+// MARK: - Enrollment State Enum
+enum EnrollmentState: String { // Conforming to String for potential logging/debugging
+    case notEnrolled
+    case promptCenter
+    case capturingCenter
+    case promptLeft
+    case capturingLeft
+    case promptRight
+    case capturingRight
+    case promptUp
+    case capturingUp
+    case promptDown
+    case capturingDown
+    case promptCloser
+    case capturingCloser
+    case promptFurther
+    case capturingFurther
+    case calculatingThresholds
+    case enrollmentComplete
+    case enrollmentFailed
+}
+
 /**
  * CameraManager - Handles camera capture, face detection, and depth analysis
  *
@@ -38,11 +60,35 @@ class CameraManager: NSObject, ObservableObject {
     /// Controls whether face detection processing is active
     @Published var isTestActive = false
     
+    /// Manages the current state of the user enrollment process
+    @Published var enrollmentState: EnrollmentState = .notEnrolled
+    
     /// Flag to track if a face was seen at any point during the current test
     var faceWasDetectedThisTest = false
     
     /// Access to the face detector for test result analysis
     private(set) var faceDetector = FaceDetector()
+    
+    /// Timer work item for delayed state transitions during enrollment
+    private var enrollmentTimerWorkItem: DispatchWorkItem?
+    
+    /// Dictionary to store captured enrollment data (LivenessCheckResults per state)
+    private var capturedEnrollmentData: [EnrollmentState: [LivenessCheckResults]] = [:]
+    /// How many valid frames to capture for each pose during enrollment
+    private let framesNeededPerPose = 7 // Capture 7 frames per pose
+    /// Timeout for capturing data for a single pose
+    private let captureTimeout: TimeInterval = 10.0 // 10 seconds timeout per pose
+    /// Lock for thread-safe access to capturedEnrollmentData
+    private let enrollmentDataLock = NSLock()
+    
+    /// Stores the most recently processed depth values for potential fallback check
+    private var lastProcessedDepthValues: [Float]?
+    
+    /// Holds the thresholds loaded from UserDefaults, if available
+    var persistedThresholds: UserDepthThresholds?
+    
+    /// UserDefaults key for storing thresholds
+    private let userDefaultsKey = "userDepthThresholds"
     
     // MARK: - Private Properties
     
@@ -72,6 +118,18 @@ class CameraManager: NSObject, ObservableObject {
         case cannotAddInput        // Cannot add camera input to the session
         case cannotAddOutput       // Cannot add video/depth output to the session
         case createCaptureInput(Error) // Error creating camera input
+    }
+    
+    // MARK: - Initialization
+    override init() {
+        super.init()
+        // Attempt to load saved thresholds on initialization
+        self.persistedThresholds = loadThresholds()
+        // Set initial enrollment state based on loaded thresholds
+        self.enrollmentState = (self.persistedThresholds != nil) ? .enrollmentComplete : .notEnrolled
+        // Pass loaded thresholds to the checker
+        self.faceDetector.livenessChecker.userThresholds = self.persistedThresholds
+        LogManager.shared.log("CameraManager initialized. Enrollment state: \(self.enrollmentState.rawValue)")
     }
     
     // MARK: - Camera Setup
@@ -212,22 +270,35 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - Test State Management
     
     /**
-     * Prepares the manager for a new liveness test.
+     * Resets the CameraManager state for a new enrollment or test.
      */
     func prepareForNewTest() {
-        // Reset state variables for the new test
-        faceDetected = false
-        isLiveFace = false
-        faceWasDetectedThisTest = false // Reset the tracking flag
-        isTestActive = true
-        
-        // Reset the FaceDetector and its components (including TestResultManager print flag)
+        LogManager.shared.log("Preparing for new test/enrollment...")
+        // Reset Face Detector (includes LivenessChecker state)
         faceDetector.resetForNewTest()
-        print("CameraManager prepared for new test.")
+        // Reset flags
+        faceDetected = false
+        isLiveFace = false 
+        faceWasDetectedThisTest = false
+        // Reset enrollment data if starting fresh
+        resetEnrollmentData()
+        // Activate test mode (enables depth processing etc.)
+        isTestActive = true 
+        LogManager.shared.log("CameraManager prepared.")
     }
-    
+
     /**
-     * Finalizes the current liveness test.
+     * Clears captured enrollment data.
+     */
+    private func resetEnrollmentData() {
+        enrollmentDataLock.lock()
+        capturedEnrollmentData.removeAll()
+        enrollmentDataLock.unlock()
+        LogManager.shared.log("Cleared captured enrollment data.")
+    }
+
+    /**
+     * Finalizes the current test or enrollment attempt.
      */
     func finalizeTest() {
         // Check if a face was ever detected during this test before resetting flags
@@ -241,6 +312,493 @@ class CameraManager: NSObject, ObservableObject {
         // faceDetected = false 
         // isLiveFace = false
         print("CameraManager finalized test.")
+    }
+    
+    // MARK: - Enrollment Sequence Control
+    
+    // Define the sequence of poses required for enrollment
+    private let enrollmentSequence: [EnrollmentState] = [
+        .promptCenter,
+        .capturingCenter,
+        .promptLeft,
+        .capturingLeft,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptRight,
+        .capturingRight,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptUp,
+        .capturingUp,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptDown,
+        .capturingDown,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptCloser,
+        .capturingCloser,
+        .promptCenter, // Return to center
+        .capturingCenter,
+        .promptFurther,
+        .capturingFurther,
+        .promptCenter, // Final center pose
+        .capturingCenter,
+        .calculatingThresholds // Final step
+    ]
+    
+    private var currentEnrollmentStepIndex = -1
+    
+    /**
+     * Starts the user enrollment sequence.
+     */
+    func startEnrollmentSequence() {
+        guard enrollmentState == .notEnrolled || enrollmentState == .enrollmentFailed else {
+            LogManager.shared.log("Warning: Enrollment sequence requested but already in state \(enrollmentState.rawValue)")
+            return
+        }
+        LogManager.shared.log("Enrollment sequence started.")
+        // Reset manager state (clears old results, resets flags, resets enrollment data)
+        prepareForNewTest()
+        
+        currentEnrollmentStepIndex = -1 // Reset index
+        advanceEnrollmentState() // Start with the first step
+    }
+    
+    /**
+     * Advances the enrollment process to the next state in the sequence.
+     * Handles delays for prompt states and triggers next steps.
+     */
+    private func advanceEnrollmentState() {
+        // Cancel any pending timer from the previous state
+        enrollmentTimerWorkItem?.cancel()
+        
+        currentEnrollmentStepIndex += 1
+        
+        guard currentEnrollmentStepIndex < enrollmentSequence.count else {
+            // Reached the end of the defined sequence (should end on .calculatingThresholds)
+            LogManager.shared.log("Enrollment sequence index out of bounds. Completing.")
+            // This path shouldn't ideally be hit if sequence includes calculating
+            updateEnrollmentState(to: .calculatingThresholds) 
+            return
+        }
+        
+        let nextState = enrollmentSequence[currentEnrollmentStepIndex]
+        updateEnrollmentState(to: nextState)
+    }
+
+    /**
+     * Updates the enrollmentState on the main thread and handles timed transitions.
+     * - Parameter newState: The state to transition to.
+     */
+    private func updateEnrollmentState(to newState: EnrollmentState) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Avoid redundant updates
+            guard self.enrollmentState != newState else { return }
+            
+            self.enrollmentState = newState
+            LogManager.shared.log("Enrollment state changed to: \(newState.rawValue)")
+            
+            // Handle automatic transitions after delays
+            switch newState {
+            case .promptCenter, .promptLeft, .promptRight, .promptUp, .promptDown, .promptCloser, .promptFurther:
+                // Schedule transition to corresponding 'capturing' state after a delay
+                let workItem = DispatchWorkItem { [weak self] in
+                    self?.advanceEnrollmentState() // Move to the next step in the sequence (which should be a capturing state)
+                }
+                self.enrollmentTimerWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem) // 1.5 second delay
+                
+            case .capturingCenter, .capturingLeft, .capturingRight, .capturingUp, .capturingDown, .capturingCloser, .capturingFurther:
+                // Data capture logic (Step 1.5) will eventually trigger advanceEnrollmentState()
+                // Start a timeout timer for this capture state
+                let timeoutWorkItem = DispatchWorkItem { [weak self] in
+                    guard let self = self, self.enrollmentState == newState else { return } // Only timeout if still in this state
+                    LogManager.shared.log("Error: Timeout occurred while capturing data for state \(newState.rawValue). Failing enrollment.")
+                    self.updateEnrollmentState(to: .enrollmentFailed)
+                }
+                self.enrollmentTimerWorkItem = timeoutWorkItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.captureTimeout, execute: timeoutWorkItem)
+                
+            case .calculatingThresholds:
+                // Trigger actual threshold calculation
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in // Perform calculation off main thread
+                    guard let self = self else { return }
+                    if let calculatedThresholds = self.calculateThresholds() {
+                        // Persist the newly calculated thresholds
+                        self.saveThresholds(calculatedThresholds)
+                        self.updateEnrollmentState(to: .enrollmentComplete)
+                    } else {
+                        LogManager.shared.log("Error: Threshold calculation failed.")
+                        self.updateEnrollmentState(to: .enrollmentFailed)
+                    }
+                }
+                
+            case .enrollmentComplete, .enrollmentFailed, .notEnrolled:
+                // Final states, cancel any pending timers
+                self.enrollmentTimerWorkItem?.cancel()
+                self.currentEnrollmentStepIndex = -1 // Reset sequence progress
+            }
+        }
+    }
+    
+    /**
+     * Cancels the enrollment process, resetting the state.
+     */
+     func cancelEnrollment() {
+         enrollmentTimerWorkItem?.cancel()
+         currentEnrollmentStepIndex = -1
+         // Reset state without clearing potentially saved thresholds
+         // If thresholds were calculated and saved, next launch should still find them.
+         // If cancelled mid-way, it will revert to .notEnrolled or .enrollmentFailed.
+         if enrollmentState != .enrollmentComplete {
+             updateEnrollmentState(to: .enrollmentFailed) 
+         }
+         LogManager.shared.log("Enrollment sequence cancelled.")
+     }
+    
+    // MARK: - Threshold Calculation
+    
+    /// Helper struct to hold calculated statistics for a set of LivenessCheckResults
+    private struct MetricStats {
+        let meanOfMeans: Float
+        let stdDevOfMeans: Float
+        let meanOfStdDevs: Float
+        let stdDevOfStdDevs: Float
+        let meanOfRanges: Float
+        let stdDevOfRanges: Float
+        let meanOfEdgeStdDevs: Float
+        let stdDevOfEdgeStdDevs: Float
+        let meanOfCenterStdDevs: Float
+        let stdDevOfCenterStdDevs: Float
+        let meanOfGradientMeans: Float
+        let stdDevOfGradientMeans: Float
+        let meanOfGradientStdDevs: Float
+        let stdDevOfGradientStdDevs: Float
+        
+        // Absolute min/max observed values (useful for range checks)
+        let minObservedMean: Float
+        let maxObservedMean: Float
+    }
+    
+    /**
+     * Calculates personalized thresholds based on the captured enrollment data.
+     * Uses data from center, closer, and further poses to establish broader thresholds.
+     * - Returns: A `UserDepthThresholds` object or nil if calculation fails.
+     */
+    private func calculateThresholds() -> UserDepthThresholds? {
+        enrollmentDataLock.lock()
+        let centerResults = capturedEnrollmentData[.capturingCenter] ?? []
+        let closerResults = capturedEnrollmentData[.capturingCloser] ?? []
+        let furtherResults = capturedEnrollmentData[.capturingFurther] ?? []
+        enrollmentDataLock.unlock()
+        
+        LogManager.shared.log("Starting threshold calculation with Center: \(centerResults.count), Closer: \(closerResults.count), Further: \(furtherResults.count) frames.")
+        
+        let minFramesPerPose = 3 // Require at least 3 frames for a pose to be included
+        guard centerResults.count >= minFramesPerPose else { 
+            LogManager.shared.log("Error: Insufficient center pose data captured (\(centerResults.count) < \(minFramesPerPose)). Cannot calculate thresholds.")
+            return nil
+        }
+        
+        // --- Calculate statistics for each relevant pose dataset ---
+        var poseStatsList: [MetricStats] = []
+        
+        if let centerStats = calculateMetricStats(from: centerResults, poseName: "Center") {
+            poseStatsList.append(centerStats)
+        }
+        if closerResults.count >= minFramesPerPose, let closerStats = calculateMetricStats(from: closerResults, poseName: "Closer") {
+             poseStatsList.append(closerStats)
+             LogManager.shared.log("Included Closer pose data in threshold calculation.")
+        } else {
+            LogManager.shared.log("Warning: Insufficient Closer pose data (\(closerResults.count) < \(minFramesPerPose)). Skipping for threshold calculation.")
+        }
+        if furtherResults.count >= minFramesPerPose, let furtherStats = calculateMetricStats(from: furtherResults, poseName: "Further") {
+             poseStatsList.append(furtherStats)
+             LogManager.shared.log("Included Further pose data in threshold calculation.")
+        } else {
+             LogManager.shared.log("Warning: Insufficient Further pose data (\(furtherResults.count) < \(minFramesPerPose)). Skipping for threshold calculation.")
+        }
+        
+        guard !poseStatsList.isEmpty else {
+            LogManager.shared.log("Error: Could not calculate statistics for any valid pose.")
+            return nil // Should be prevented by initial centerResults check, but good practice
+        }
+        
+        // --- Combine stats to get overall min/max bounds --- 
+        
+        // Gather all raw metric values from included poses
+        let allResults = poseStatsList.flatMap { _ in 
+            // Need to re-access the original data based on which poses were included
+            // This is inefficient, better to pass the actual results used for stats
+            // Let's refactor calculateMetricStats to return raw values or modify approach.
+            // --- REVISED APPROACH: Calculate min/max observed directly --- 
+            [] as [LivenessCheckResults] // Placeholder - will be replaced below
+        }
+        enrollmentDataLock.lock()
+        var allCombinedResults: [LivenessCheckResults] = []
+        if centerResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: centerResults) }
+        if closerResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: closerResults) }
+        if furtherResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: furtherResults) }
+        enrollmentDataLock.unlock()
+
+        guard !allCombinedResults.isEmpty else {
+            LogManager.shared.log("Error: No combined results available for min/max observed calculation.")
+            return nil
+        }
+
+        let allMeans = allCombinedResults.map { $0.mean }
+        let allStdDevs = allCombinedResults.map { $0.stdDev }
+        let allRanges = allCombinedResults.map { $0.range }
+        let allEdgeStdDevs = allCombinedResults.map { $0.edgeStdDev }
+        let allCenterStdDevs = allCombinedResults.map { $0.centerStdDev }
+        let allGradientMeans = allCombinedResults.map { $0.gradientMean }
+        let allGradientStdDevs = allCombinedResults.map { $0.gradientStdDev }
+        
+        // Helper to get min/max bounds for a metric across poses
+        func getBounds( 
+            valueExtractor: (MetricStats) -> (mean: Float, stdDev: Float),
+            boundType: ThresholdBoundType,
+            absoluteClampMin: Float? = nil, 
+            absoluteClampMax: Float? = nil,
+            hardcodedRef: Float // Original hardcoded value for clamping logic
+        ) -> Float {
+            let k: Float = 2.0 // Multiplier for std dev range (tunable parameter)
+            let bounds = poseStatsList.map { stats -> Float in
+                let (mean, stdDev) = valueExtractor(stats)
+                // Ensure stdDev is non-negative before potentially subtracting
+                let safeStdDev = max(0, stdDev) 
+                switch boundType {
+                case .min:
+                    var finalBound = mean - k * safeStdDev
+                    // Clamp: Don't let personalized min be *less strict* (lower) than hardcoded.
+                    // Take the HIGHER (stricter) of the calculated bound and the hardcoded reference.
+                    // Also apply absolute floor.
+                    finalBound = max(finalBound, hardcodedRef)
+                    if let clamp = absoluteClampMin { finalBound = max(clamp, finalBound) }
+                    return finalBound
+                case .max:
+                    var finalBound = mean + k * safeStdDev
+                    // Clamp: Don't let personalized max be *less strict* (higher) than hardcoded.
+                    // Take the LOWER (stricter) of the calculated bound and the hardcoded reference.
+                    finalBound = min(finalBound, hardcodedRef)
+                    if let clamp = absoluteClampMax { finalBound = min(clamp, finalBound) }
+                    return finalBound
+                }
+            }
+            
+            var finalBound: Float
+            switch boundType {
+            case .min:
+                finalBound = bounds.min() ?? hardcodedRef // Fallback to hardcoded if no bounds calculated
+                // Clamp: Don't let personalized min be *less strict* (lower) than hardcoded.
+                // Take the HIGHER (stricter) of the calculated bound and the hardcoded reference.
+                // Also apply absolute floor.
+                finalBound = max(finalBound, hardcodedRef)
+                if let clamp = absoluteClampMin { finalBound = max(clamp, finalBound) }
+            case .max:
+                finalBound = bounds.max() ?? hardcodedRef // Fallback to hardcoded
+                // Clamp: Don't let personalized max be *less strict* (higher) than hardcoded.
+                // Take the LOWER (stricter) of the calculated bound and the hardcoded reference.
+                finalBound = min(finalBound, hardcodedRef)
+                if let clamp = absoluteClampMax { finalBound = min(clamp, finalBound) }
+            }
+            return finalBound
+        }
+
+        enum ThresholdBoundType { case min, max }
+
+        // --- Calculate final thresholds (Using Min Observed for Lower Bounds) --- 
+        
+        // Mean Depth Range: Use observed min/max across included poses, clamped
+        let minObservedMeanOverall = allMeans.min() ?? 0.2
+        let maxObservedMeanOverall = allMeans.max() ?? 3.0
+        // Define range based on observed min/max during enrollment, plus buffer, clamped
+        let buffer: Float = 0.1 // 10cm buffer
+        let minMeanDepth = max(0.15, minObservedMeanOverall - buffer) // Clamp floor at 15cm
+        let maxMeanDepth = min(3.5, maxObservedMeanOverall + buffer) // Clamp ceiling at 3.5m
+
+        // Min Standard Deviation (Lower bound: min observed - buffer, clamped by hardcoded min)
+        let hardcodedMinStdDev: Float = 0.02
+        let minObservedStdDev = allStdDevs.min() ?? hardcodedMinStdDev
+        let minStdDevBuffer: Float = max(0.001, minObservedStdDev * 0.15) // 15% buffer or 0.001
+        let minStdDev = max(hardcodedMinStdDev, minObservedStdDev - minStdDevBuffer)
+
+        // Min Range (Similar to StdDev)
+        let hardcodedMinRange: Float = 0.05
+        let minObservedRange = allRanges.min() ?? hardcodedMinRange
+        let minRangeBuffer: Float = max(0.005, minObservedRange * 0.15) // 15% buffer or 0.005
+        let minRange = max(hardcodedMinRange, minObservedRange - minRangeBuffer)
+
+        // Min Edge StdDev (Similar to StdDev)
+        let hardcodedMinEdgeStdDev: Float = 0.02
+        let minObservedEdgeStdDev = allEdgeStdDevs.min() ?? hardcodedMinEdgeStdDev
+        let minEdgeStdDevBuffer: Float = max(0.001, minObservedEdgeStdDev * 0.15)
+        let minEdgeStdDev = max(hardcodedMinEdgeStdDev, minObservedEdgeStdDev - minEdgeStdDevBuffer)
+
+        // Min Center StdDev (Similar to StdDev)
+        let hardcodedMinCenterStdDev: Float = 0.005
+        let minObservedCenterStdDev = allCenterStdDevs.min() ?? hardcodedMinCenterStdDev
+        let minCenterStdDevBuffer: Float = max(0.0005, minObservedCenterStdDev * 0.15)
+        let minCenterStdDev = max(hardcodedMinCenterStdDev, minObservedCenterStdDev - minCenterStdDevBuffer)
+
+        // Max Gradient Mean (Upper bound: mean + k*stddev)
+        let maxGradientMean = getBounds(valueExtractor: { ($0.meanOfGradientMeans, $0.stdDevOfGradientMeans) }, 
+                                      boundType: .max, 
+                                      absoluteClampMax: 1.0, // Absolute reasonable ceiling 
+                                      hardcodedRef: 0.5) // Original hardcoded value
+
+        // Min Gradient StdDev (Similar to StdDev)
+        let hardcodedMinGradStdDev: Float = 0.001
+        let minObservedGradStdDev = allGradientStdDevs.min() ?? hardcodedMinGradStdDev
+        let minGradStdDevBuffer: Float = max(0.0001, minObservedGradStdDev * 0.15)
+        let minGradientStdDev = max(hardcodedMinGradStdDev, minObservedGradStdDev - minGradStdDevBuffer)
+        
+        let thresholds = UserDepthThresholds(
+            minMeanDepth: minMeanDepth,
+            maxMeanDepth: maxMeanDepth,
+            minStdDev: minStdDev,
+            minRange: minRange,
+            minEdgeStdDev: minEdgeStdDev,
+            minCenterStdDev: minCenterStdDev,
+            maxGradientMean: maxGradientMean,
+            minGradientStdDev: minGradientStdDev
+        )
+        
+        thresholds.logSummary() // Log the calculated thresholds
+        return thresholds
+    }
+    
+    /**
+     * Calculates metric statistics for a given set of LivenessCheckResults.
+     */
+    private func calculateMetricStats(from results: [LivenessCheckResults], poseName: String) -> MetricStats? {
+        guard !results.isEmpty else {
+            LogManager.shared.log("Warning: No results provided for calculating metric stats for pose \(poseName).")
+            return nil
+        }
+
+        let means = results.map { $0.mean }
+        let stdDevs = results.map { $0.stdDev }
+        let ranges = results.map { $0.range }
+        let edgeStdDevs = results.map { $0.edgeStdDev }
+        let centerStdDevs = results.map { $0.centerStdDev }
+        let gradientMeans = results.map { $0.gradientMean }
+        let gradientStdDevs = results.map { $0.gradientStdDev }
+
+        let (meanOfMeans, stdDevOfMeans) = calculateStats(from: means)
+        let (meanOfStdDevs, stdDevOfStdDevs) = calculateStats(from: stdDevs)
+        let (meanOfRanges, stdDevOfRanges) = calculateStats(from: ranges)
+        let (meanOfEdgeStdDevs, stdDevOfEdgeStdDevs) = calculateStats(from: edgeStdDevs)
+        let (meanOfCenterStdDevs, stdDevOfCenterStdDevs) = calculateStats(from: centerStdDevs)
+        let (meanOfGradientMeans, stdDevOfGradientMeans) = calculateStats(from: gradientMeans)
+        let (meanOfGradientStdDevs, stdDevOfGradientStdDevs) = calculateStats(from: gradientStdDevs)
+
+        // Find absolute min/max for mean depth
+        let minObservedMean = means.min() ?? 0
+        let maxObservedMean = means.max() ?? 0
+
+        return MetricStats(
+            meanOfMeans: meanOfMeans,
+            stdDevOfMeans: stdDevOfMeans,
+            meanOfStdDevs: meanOfStdDevs,
+            stdDevOfStdDevs: stdDevOfStdDevs,
+            meanOfRanges: meanOfRanges,
+            stdDevOfRanges: stdDevOfRanges,
+            meanOfEdgeStdDevs: meanOfEdgeStdDevs,
+            stdDevOfEdgeStdDevs: stdDevOfEdgeStdDevs,
+            meanOfCenterStdDevs: meanOfCenterStdDevs,
+            stdDevOfCenterStdDevs: stdDevOfCenterStdDevs,
+            meanOfGradientMeans: meanOfGradientMeans,
+            stdDevOfGradientMeans: stdDevOfGradientMeans,
+            meanOfGradientStdDevs: meanOfGradientStdDevs,
+            stdDevOfGradientStdDevs: stdDevOfGradientStdDevs,
+            minObservedMean: minObservedMean,
+            maxObservedMean: maxObservedMean
+        )
+    }
+    
+    /**
+     * Helper to calculate mean and standard deviation for an array of Floats.
+     * - Parameter values: Array of Float values.
+     * - Returns: Tuple containing (mean, standardDeviation). Returns (0, 0) for empty or single-element arrays.
+     */
+    private func calculateStats(from values: [Float]) -> (mean: Float, standardDeviation: Float) {
+        let count = Float(values.count)
+        guard count > 1 else { return (values.first ?? 0, 0) } // Return mean if only 1 value, 0 stddev
+        
+        let mean = values.reduce(0, +) / count
+        let variance = values.reduce(0) { $0 + pow($1 - mean, 2) } / count // Population variance
+        let standardDeviation = sqrt(variance)
+        
+        return (mean, standardDeviation)
+    }
+    
+    // MARK: - Persistence (UserDefaults)
+    
+    /**
+     * Saves the provided thresholds to UserDefaults.
+     */
+    private func saveThresholds(_ thresholds: UserDepthThresholds) {
+        let encoder = JSONEncoder()
+        do {
+            let data = try encoder.encode(thresholds)
+            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+            LogManager.shared.log("Successfully saved user thresholds to UserDefaults.")
+            // Update the in-memory persisted thresholds as well
+            self.persistedThresholds = thresholds
+            // Update the checker instance with the new thresholds
+            self.faceDetector.livenessChecker.userThresholds = thresholds
+        } catch {
+            LogManager.shared.log("Error: Failed to encode or save user thresholds: \(error.localizedDescription)")
+        }
+    }
+    
+    /**
+     * Loads thresholds from UserDefaults.
+     * - Returns: The loaded `UserDepthThresholds` or nil if not found or decoding fails.
+     */
+    private func loadThresholds() -> UserDepthThresholds? {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey) else {
+            LogManager.shared.log("Info: No saved user thresholds found in UserDefaults.")
+            return nil
+        }
+        
+        let decoder = JSONDecoder()
+        do {
+            let thresholds = try decoder.decode(UserDepthThresholds.self, from: data)
+            LogManager.shared.log("Successfully loaded user thresholds from UserDefaults.")
+            thresholds.logSummary() // Log loaded thresholds for confirmation
+            return thresholds
+        } catch {
+            LogManager.shared.log("Error: Failed to decode user thresholds from UserDefaults: \(error.localizedDescription). Clearing invalid data.")
+            // Clear invalid data to prevent repeated errors
+            clearSavedThresholds()
+            return nil
+        }
+    }
+    
+    /**
+     * Clears any saved thresholds from UserDefaults and resets in-memory state.
+     */
+    private func clearSavedThresholds() {
+        UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+        self.persistedThresholds = nil
+        // Clear thresholds from the checker instance
+        self.faceDetector.livenessChecker.userThresholds = nil
+        LogManager.shared.log("Cleared saved user thresholds from UserDefaults.")
+    }
+    
+    /**
+     * Public method to reset enrollment: clears saved data and resets state.
+     */
+    func resetEnrollment() {
+        LogManager.shared.log("Resetting enrollment...")
+        clearSavedThresholds()
+        // Update state to reflect that enrollment is now needed
+        updateEnrollmentState(to: .notEnrolled)
     }
     
     // MARK: - Depth Analysis
@@ -314,8 +872,15 @@ class CameraManager: NSObject, ObservableObject {
     }
     
     func depthDataOutput(_ output: AVCaptureDepthDataOutput, didOutput depthData: AVDepthData, timestamp: CMTime, connection: AVCaptureConnection) {
-        // Only process depth data if a test is active AND a face has been detected
-        guard isTestActive, faceDetected else { 
+        // Or if we are in an enrollment capturing state AND a face is detected
+        let isEnrollingAndCapturing = [.capturingCenter, .capturingLeft, .capturingRight, 
+                                     .capturingUp, .capturingDown, .capturingCloser, 
+                                     .capturingFurther].contains(enrollmentState)
+                                     
+        let shouldProcessForLivenessTest = isTestActive && faceDetected && !isEnrollingAndCapturing
+        let shouldProcessForEnrollment = isEnrollingAndCapturing && faceDetected
+        
+        guard shouldProcessForLivenessTest || shouldProcessForEnrollment else {
             // If the test is active but no face is detected, print a debug message - REMOVED
             /*
             if isTestActive && !faceDetected {
@@ -331,13 +896,17 @@ class CameraManager: NSObject, ObservableObject {
             return 
         }
         
-        // Process depth data on background queue
+        // --- Process depth data on background queue ---
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             
             // Convert depth data to the right format
             let convertedDepthData = depthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
             let pixelBuffer = convertedDepthData.depthDataMap
+            let currentPoseState = self.enrollmentState // Capture state for logging/use
+            
+            // Store the latest depth values before performing checks
+            self.lastProcessedDepthValues = self.convertDepthDataToArray(pixelBuffer)
             
             // Convert depth data to array of Float values
             let depthValues = self.convertDepthDataToArray(pixelBuffer)
@@ -346,16 +915,80 @@ class CameraManager: NSObject, ObservableObject {
             // print("Depth data dimensions: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
             // print("Sampled points: \(depthValues.count)")
             
-            // Check liveness using FaceDetector
-            // Assuming checkLiveness now just returns Bool
-            let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+            // Perform the core liveness checks to get statistics
+            // Use the livenessChecker directly associated with the faceDetector
+            let checkResults = self.faceDetector.livenessChecker.performLivenessChecks(depthValues: depthValues)
             
-            // Update isLiveFace on main thread
-            DispatchQueue.main.async {
-                self.isLiveFace = isLive
+            // --- Enrollment Data Capture Logic ---
+            if shouldProcessForEnrollment {
+                 LogManager.shared.log("Debug: Processing frame for enrollment state: \(currentPoseState.rawValue)")
+                 
+                 self.enrollmentDataLock.lock()
+                 var currentDataForState = self.capturedEnrollmentData[currentPoseState] ?? []
+                 currentDataForState.append(checkResults)
+                 self.capturedEnrollmentData[currentPoseState] = currentDataForState
+                 let capturedCount = currentDataForState.count
+                 self.enrollmentDataLock.unlock()
+                 
+                 LogManager.shared.log("Debug: Captured frame \(capturedCount)/\(self.framesNeededPerPose) for \(currentPoseState.rawValue)")
+                 
+                 // Check if enough frames are collected for the current pose
+                 if capturedCount >= self.framesNeededPerPose {
+                     LogManager.shared.log("Info: Sufficient frames captured for \(currentPoseState.rawValue). Advancing state.")
+                     // Advance to the next state (e.g., next prompt or calculating)
+                     self.advanceEnrollmentState()
+                 }
+            // --- Liveness Test Logic ---
+            } else if shouldProcessForLivenessTest {
+                // Original liveness check logic - runs with currently set thresholds (user or hardcoded)
+                let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
+                let finalIsLive = isLive // No per-frame fallback here
+                
+                 // Update isLiveFace on main thread using the final outcome
+                 DispatchQueue.main.async {
+                     // Only update if the state actually changed to avoid unnecessary UI refreshes
+                     if self.isLiveFace != finalIsLive {
+                         self.isLiveFace = finalIsLive
+                     }
+                 }
+
+                // Also update lastProcessedDepthValues when isLiveFace is set
+                // Ensure we have the data associated with the final UI state
+                self.lastProcessedDepthValues = depthValues
             }
         }
         DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
+    }
+    
+    /**
+     * Performs a liveness check using only hardcoded thresholds on the last processed depth data.
+     * To be called only as a fallback when a test times out after failing with user thresholds.
+     * - Returns: True if the hardcoded check passes, false otherwise.
+     */
+    func performHardcodedFallbackCheck() -> Bool {
+        guard let lastDepthValues = self.lastProcessedDepthValues else {
+            LogManager.shared.log("Error: Cannot perform fallback check, no last depth values available.")
+            return false
+        }
+        
+        guard self.persistedThresholds != nil else {
+             LogManager.shared.log("Warning: Fallback check requested, but no user thresholds were active initially.")
+             return false 
+        }
+
+        LogManager.shared.log("Performing fallback check with hardcoded thresholds...")
+        
+        // Temporarily clear user thresholds
+        let originalThresholds = self.faceDetector.livenessChecker.userThresholds
+        self.faceDetector.livenessChecker.userThresholds = nil
+        
+        // Run check (don't store result again)
+        let fallbackResult = self.faceDetector.checkLiveness(depthData: lastDepthValues, storeResult: false)
+        
+        // Restore thresholds
+        self.faceDetector.livenessChecker.userThresholds = originalThresholds
+        
+        return fallbackResult
     }
 }
 

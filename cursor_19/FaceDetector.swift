@@ -18,14 +18,14 @@ class FaceDetector {
     /// Handler for processing sequences of vision requests - Might not be needed if only doing single frame detection?
     // private let faceDetectionRequestHandler = VNSequenceRequestHandler() // Consider if sequence handling is truly needed
     
-    /// The liveness checker instance
-    private let livenessChecker = LivenessChecker()
+    /// Manages storing and retrieving test results
+    let testResultManager = TestResultManager() // Instantiate directly
     
-    /// Manager for handling test results
-    let testResultManager = TestResultManager() // Handles storage details
+    /// Performs the individual liveness checks based on depth data
+    let livenessChecker = LivenessChecker()
     
-    // Remove properties now managed by LivenessChecker or TestResultManager
-    private var lastDepthData: [Float]? // Keep for potential debugging/display?
+    /// Stores the most recent depth data array for debugging or display purposes
+    private(set) var lastDepthData: [Float]?
     
     // MARK: - Initialization
     

@@ -10,6 +10,9 @@ A SwiftUI-based iOS application that uses the TrueDepth camera to detect and ver
 - Test history tracking with timestamps
 - Support for both light and dark mode
 - Comprehensive error handling and user feedback
+- User enrollment and personalized thresholds
+- Fallback mechanism if liveness check fails with personalized thresholds
+- Spoof detection to reject presentation attacks
 
 ## Requirements
 
@@ -31,6 +34,9 @@ A SwiftUI-based iOS application that uses the TrueDepth camera to detect and ver
 3. Position your face within the frame
 4. The app will automatically detect your face and perform liveness checks
 5. Results will be displayed in real-time with detailed statistics
+6. **View Results:** The result (success, failure, timeout, fallback success, fallback failure) is displayed prominently.
+7. **(Optional) Share Logs:** Use the share button to export detailed session logs.
+8. **(Optional) Reset Enrollment:** Use the reset button (visible after enrollment) to clear personalized thresholds and re-enroll.
 
 ## Liveness Detection System
 
@@ -57,29 +63,27 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 2. **Center Variation**
    - Purpose: Verifies natural depth variation in face center
    - Thresholds:
-     - Center standard deviation ≥ 0.1
+     - Center standard deviation ≥ 0.005 (*Hardcoded fallback value*)
    - Why: Real faces have natural depth variations in the center region
 
 3. **Edge Variation**
    - Purpose: Checks for natural depth transitions at face edges
    - Thresholds:
-     - Edge standard deviation ≥ 0.15
+     - Edge standard deviation ≥ 0.02 (*Hardcoded fallback value*)
    - Why: Real faces have soft edges, while photos often have sharp edges
 
 4. **Depth Profile**
    - Purpose: Analyzes natural depth profile across the face
    - Thresholds:
-     - Standard deviation ≥ 0.2 OR
-     - Depth range ≥ 0.4 meters
+     - Standard deviation ≥ 0.02 OR
+     - Depth range ≥ 0.05 meters (*Hardcoded fallback values*)
    - Why: Real faces have natural depth profiles, while photos are uniform
 
 #### Optional Checks
 
 1. **Depth Variation**
-   - Purpose: Ensures the face has natural depth variation
-   - Thresholds:
-     - Standard deviation ≥ 0.15
-     - Depth range ≥ 0.3 meters
+   - Purpose: Ensures the face has sufficient overall depth variation
+   - Thresholds: `stdDev ≥ 0.02` AND `range ≥ 0.05` (*Hardcoded fallback values*). Checks against personalized or hardcoded minimums
    - Why: Real faces have natural depth variations, while photos are typically flat
 
 2. **Depth Distribution**
@@ -89,9 +93,7 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 3. **Gradient Pattern**
    - Purpose: Checks for natural depth gradient patterns
-   - Thresholds:
-     - Gradient standard deviation ≥ 0.005
-     - Gradient mean ≤ 0.2
+   - Thresholds: `gradientStdDev ≥ 0.001` AND `gradientMean ≤ 0.5` (*Hardcoded fallback values*). Checks against personalized or hardcoded thresholds
    - Why: Real faces have natural depth gradients
 
 4. **Temporal Consistency**
@@ -109,10 +111,12 @@ The app uses a sophisticated liveness detection system that combines multiple ch
 
 ### Test Result Requirements
 
-A face is considered "live" if it meets ALL of the following criteria:
-1. Has at least 30 valid depth samples
+A face is considered "live" if it meets ALL of the following criteria during the test window:
+1. Has enough valid depth samples (typically 100 from a 10x10 grid)
 2. Passes all 4 mandatory checks
 3. Passes at least 3 out of 5 optional checks
+
+*If the above criteria are not met within the time limit using personalized thresholds, a fallback check using hardcoded thresholds is performed on the last frame.*
 
 ### Debug Output
 
@@ -126,11 +130,7 @@ The app provides detailed debug information including:
 
 ## Technical Details
 
-The liveness detection system uses a combination of mandatory and optional checks:
-- Mandatory checks must all pass for a face to be considered live
-- At least 3 out of 5 optional checks must pass
-- Minimum of 30 depth samples required for analysis
-- Real-time processing of depth data at 10x10 sampling grid
+The system uses `AVFoundation` for camera capture (including depth data) and `Vision` for face detection. Liveness logic resides primarily in `LivenessChecker.swift`, using thresholds calculated in `CameraManager.swift`. Personalized thresholds are stored in `UserDefaults`. Enrollment and test states are managed via `EnrollmentState` enum and UI logic in `ContentView.swift`.
 
 ## License
 
@@ -144,3 +144,29 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Inspired by concepts and best practices for liveness detection discussed in documentation for Google's ML Kit and Apple's Vision framework.
 - This project utilizes Apple's Vision framework for face detection.
+
+## How it Works
+
+1.  **Enrollment (First Use or After Reset):**
+    *   The user is guided through a sequence of poses (looking center, left, right, up, down, moving closer, moving further).
+    *   During specific poses (`.capturing...`), depth data and facial geometry statistics are captured using `AVFoundation` and `Vision`.
+    *   Based on the captured data (primarily from center, closer, and further poses), personalized thresholds for various liveness checks are calculated using the "Combined Pose Data" strategy (min-observed for minimums, clamped by hardcoded values).
+    *   These thresholds are saved locally using `UserDefaults`.
+
+2.  **Liveness Test (After Enrollment):**
+    *   The user taps "Start Liveness Test".
+    *   A 5-second countdown begins.
+    *   The app continuously processes depth frames from the TrueDepth camera.
+    *   For each frame, the `LivenessChecker` performs a series of checks using the **user's personalized thresholds** (or hardcoded if enrollment hasn't happened).
+    *   If a frame passes all mandatory checks and enough optional checks (`TestResultManager.currentTestWasSuccessful` becomes true), the test stops immediately with a "Real Face Detected!" result.
+    *   If the timer expires without success:
+        *   If a face was detected during the test (`faceWasDetectedThisTest` is true):
+            *   If personalized thresholds were used, a **fallback check** is performed on the last frame using *hardcoded* thresholds.
+                *   If the fallback passes, the result is "Real Face Detected (Fallback)".
+                *   If the fallback also fails, the result is "Spoof Detected (Fallback)".
+            *   If hardcoded thresholds were used initially (no enrollment), the result is "Spoof Detected!".
+        *   If no face was detected during the 5 seconds, the result is "No Face Detected!".
+
+## Key Liveness Checks
+
+The system performs several checks on the depth data. Personalized thresholds are used if available (from enrollment); otherwise, hardcoded baseline values are used.

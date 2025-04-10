@@ -56,6 +56,81 @@ struct ContentView: View {
         case failure    // A face was detected but determined to be a spoof
         case timeout    // No face was detected within the time limit
         case insufficientData  // Not enough depth data to make a determination
+        case fallbackSuccess // Passed only after falling back to hardcoded thresholds
+        case fallbackFailure // Failed *even after* falling back to hardcoded thresholds
+    }
+    
+    /// Possible outcomes for the enrollment process
+    enum EnrollmentOutcome {
+        case success    // Enrollment completed successfully
+        case failure    // Enrollment failed
+    }
+    @State private var enrollmentOutcome: EnrollmentOutcome?
+    
+    // MARK: - Computed Properties
+    
+    /// Determines if the main action button should be disabled
+    private var isActionButtonDisabled: Bool {
+        isTestRunning ||
+        [.promptCenter, .capturingCenter,
+         .promptLeft, .capturingLeft,
+         .promptRight, .capturingRight,
+         .promptUp, .capturingUp,
+         .promptDown, .capturingDown,
+         .promptCloser, .capturingCloser,
+         .promptFurther, .capturingFurther,
+         .calculatingThresholds].contains(cameraManager.enrollmentState)
+    }
+    
+    /// Provides the text for the main action button
+    private var actionButtonText: String {
+        switch cameraManager.enrollmentState {
+        case .notEnrolled, .enrollmentFailed:
+            return "Start Enrollment"
+        case .enrollmentComplete:
+            return "Start Liveness Test"
+        default:
+            // During active enrollment steps, the button is disabled, but might show previous text briefly
+            // Let's keep the "Start Test" text as a default fallback during transitions
+            return "Start Liveness Test"
+        }
+    }
+    
+    /// Provides the instruction or status text displayed above the button
+    private var instructionText: String? {
+        if isTestRunning {
+            return "Testing: \(String(format: "%.1f", timeRemaining))s"
+        }
+        switch cameraManager.enrollmentState {
+        case .promptCenter: return "Look Straight Ahead"
+        case .capturingCenter: return "Look Straight Ahead"
+        case .promptLeft: return "Turn Head Left"
+        case .capturingLeft: return "Turn Head Left"
+        case .promptRight: return "Turn Head Right"
+        case .capturingRight: return "Turn Head Right"
+        case .promptUp: return "Look Up"
+        case .capturingUp: return "Look Up"
+        case .promptDown: return "Look Down"
+        case .capturingDown: return "Look Down"
+        case .promptCloser: return "Move Phone Closer"
+        case .capturingCloser: return "Move Phone Closer"
+        case .promptFurther: return "Move Phone Further Away"
+        case .capturingFurther: return "Move Phone Further Away"
+        case .calculatingThresholds: return "Calculating..."
+        // No text for other states like notEnrolled, complete, failed, or during liveness test idle
+        default: return nil
+        }
+    }
+    
+    /// Determines the color of the instruction text
+    private var instructionTextColor: Color {
+        switch cameraManager.enrollmentState {
+        case .capturingCenter, .capturingLeft, .capturingRight,
+             .capturingUp, .capturingDown, .capturingCloser, .capturingFurther:
+            return .green // Indicate active capture
+        default:
+            return .white // Default color for prompts/timer
+        }
     }
     
     // MARK: - View Body
@@ -112,6 +187,16 @@ struct ContentView: View {
                             .cornerRadius(15)
                             .transition(.opacity.animation(.easeInOut))
                             .padding(.horizontal) 
+                    } else if let outcome = enrollmentOutcome { // Show enrollment outcome if no test result
+                        Text(enrollmentOutcomeText(for: outcome))
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(enrollmentOutcomeBackground(for: outcome).opacity(0.8))
+                            .cornerRadius(15)
+                            .transition(.opacity.animation(.easeInOut))
+                            .padding(.horizontal)
                     }
                 }
                 .padding(.top, 50) // Add padding from the top safe area/notch
@@ -121,33 +206,49 @@ struct ContentView: View {
                                 
                 // Container for bottom elements
                 VStack(spacing: 15) {
+                    // Instruction / Status Text Area - REMOVED
+                    /*
+                    if let instruction = instructionText {
+                        Text(instruction)
+                            .font(.headline)
+                            .foregroundColor(instructionTextColor) // Use dynamic color
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 15)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            // Use primary foreground for contrast on material
+                            .foregroundColor(.primary) 
+                            .transition(.opacity.animation(.easeInOut))
+                            // Add fixed height to prevent layout jumps? Maybe not needed if Spacer handles it.
+                            // .frame(height: 40) 
+                    } else {
+                        // Placeholder to maintain layout height when no text is shown
+                        // Adjust height to match the approximate height of the text+padding
+                        Spacer().frame(height: 30) // Adjust height as needed
+                    }
+                    */
+                    
                     // Single Button that changes appearance and action based on state
                     Button(action: { 
-                        if !isTestRunning { startTest() }
-                        // Button is disabled when testing, so no action needed for else 
+                        handleEnrollmentOrTestButtonTap()
                     }) { 
                         // Apply styling directly to the label content
-                        Group {
-                           if isTestRunning {
-                                Text("Testing: \(String(format: "%.1f", timeRemaining))s")
-                           } else {
-                                Text("Start Liveness Test")
-                           }
-                        }
+                        // Display instruction/timer text if available, otherwise action button text
+                        Text(instructionText ?? actionButtonText)
                         .font(.headline)
-                        .foregroundColor(.white)
+                        // Set text color: Green if capturing, white otherwise
+                        .foregroundColor(instructionTextColor == .green ? .green : .white)
                         .padding() // Padding inside the label's background
                         .frame(maxWidth: .infinity) // Frame applied to label
-                        // Background applied to label
-                        .background(isTestRunning ? Color.gray : Color.blue)
+                        // Background applied to label - Use gray when disabled, blue otherwise
+                        .background(isActionButtonDisabled ? Color.gray : Color.blue)
                         .cornerRadius(15)
                     }
                     // Apply plain button style to prevent default hit testing interference
                     .buttonStyle(.plain)
                     // Define hit area based on the button's frame (which should match the label frame)
                     .contentShape(Rectangle())
-                    // Disable button when test is running
-                    .disabled(isTestRunning)
+                    // Disable button based on computed property
+                    .disabled(isActionButtonDisabled)
                     .transition(.opacity.animation(.easeInOut)) // Keep transition smooth
                     
                     // Share Logs Button - Always present for layout, but hidden/disabled when testing
@@ -163,6 +264,17 @@ struct ContentView: View {
                     .tint(.secondary) // Changed back from .gray for better visibility
                     .opacity(isTestRunning ? 0 : 1) // Hide when testing
                     .disabled(isTestRunning) // Disable when testing
+                    
+                    // Reset Enrollment Button (for testing)
+                    Button("Reset Enrollment") {
+                        cameraManager.resetEnrollment()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                    // Only show reset button if enrollment is complete or failed
+                    .opacity(cameraManager.enrollmentState == .enrollmentComplete || cameraManager.enrollmentState == .enrollmentFailed ? 1 : 0)
+                    .disabled(isTestRunning) // Also disable during test
+
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 30) // Bottom safe area padding
@@ -170,11 +282,17 @@ struct ContentView: View {
             }
             .animation(.easeInOut, value: isTestRunning) // Animate changes based on test running state
             .animation(.easeInOut, value: testResult)    // Animate changes based on result state
+            .animation(.easeInOut, value: enrollmentOutcome) // Animate enrollment outcome changes
+            .animation(.easeInOut, value: cameraManager.enrollmentState) // Animate enrollment state changes
         }
         .onDisappear {
             // Clean up resources when view disappears
             cameraManager.stopSession()
             stopTimer()
+        }
+        // Add onChange modifier to handle enrollment state transitions
+        .onChange(of: cameraManager.enrollmentState) { oldValue, newState in
+            handleEnrollmentStateChange(newState: newState)
         }
     }
     
@@ -189,10 +307,10 @@ struct ContentView: View {
      * - The timer expires (failure or timeout)
      */
     private func startTest() {
-        // LogManager.shared.clearLogs() // REMOVED: Allow logs to persist across tests
         LogManager.shared.log("=== New Test Started ===") // Log start marker
         isTestRunning = true
         testResult = nil
+        enrollmentOutcome = nil // Clear enrollment outcome when starting test
         timeRemaining = 5.0
         
         // Reset face detection state and activate test mode using the manager method
@@ -205,27 +323,44 @@ struct ContentView: View {
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] _ in
             timeRemaining -= 0.1
             
-            // Check if the *authoritative* result manager has flagged success for this test
+            // Log the flag value being checked
+            LogManager.shared.log("Debug Timer Check: currentTestWasSuccessful = \(cameraManager.faceDetector.testResultManager.currentTestWasSuccessful)")
+            
+            // Check if the *authoritative* result manager has flagged success for this test run
             if cameraManager.faceDetector.testResultManager.currentTestWasSuccessful {
-                // No need to print here, TestResultManager already logged the detailed success
-                // print("Test verified: Live face detected based on TestResultManager flag.") 
-                testResult = .success
-                stopTest()
-            } else if timeRemaining <= 0 {
-                // Timeout condition
-                // Check if a face was ever detected during the test run
-                if cameraManager.faceWasDetectedThisTest { 
-                    // Face detected, but didn't pass (flag is false). Must be failure/spoof.
-                    testResult = .failure 
-                } else {
-                    // No face detected at all during the 5 seconds.
-                    testResult = .timeout
-                }
-                stopTest()
-            }
-            // Removed the direct check of `cameraManager.faceDetected && cameraManager.isLiveFace`
-        }
-    }
+                 // This flag is set only when TestResultManager logs a definitive ✅ LIVE result.
+                 testResult = .success
+                 stopTest()
+             } else if timeRemaining <= 0 {
+                  // --- Timeout Condition ---
+                  LogManager.shared.log("Debug Timeout: Checking faceWasDetectedThisTest = \(cameraManager.faceWasDetectedThisTest)")
+                  if cameraManager.faceWasDetectedThisTest {
+                      // Face detected, but failed initial checks. Try fallback.
+                      LogManager.shared.log("Debug Timeout: faceWasDetectedThisTest is TRUE. Checking for persisted thresholds...")
+                      if cameraManager.persistedThresholds != nil { // Only fallback if user thresholds were active
+                          LogManager.shared.log("Info: Test timed out with user thresholds. Performing fallback check...")
+                          if cameraManager.performHardcodedFallbackCheck() { // Check 3: Fallback passes
+                              LogManager.shared.log("Info: Fallback check PASSED.")
+                              testResult = .fallbackSuccess
+                          } else {
+                              LogManager.shared.log("Debug: Assigning testResult = .failure (Fallback Failed)")
+                              testResult = .fallbackFailure
+                              LogManager.shared.log("Info: Fallback check FAILED.")
+                          }
+                      } else { // User thresholds were NOT active
+                          LogManager.shared.log("Debug Timeout: persistedThresholds is NIL.")
+                          LogManager.shared.log("Debug: Assigning testResult = .failure (No User Thresholds)")
+                          testResult = .failure
+                      }
+                   } else { // No face detected during test
+                      LogManager.shared.log("Debug Timeout: faceWasDetectedThisTest is FALSE.")
+                      LogManager.shared.log("Debug: Assigning testResult = .timeout")
+                      testResult = .timeout
+                   }
+                  stopTest()
+              }
+          }
+      }
     
     /**
      * Stops the current liveness test.
@@ -249,6 +384,58 @@ struct ContentView: View {
     private func stopTimer() {
         timer?.invalidate()
         timer = nil
+    }
+    
+    // MARK: - Enrollment Management
+    
+    private func handleEnrollmentOrTestButtonTap() {
+        switch cameraManager.enrollmentState {
+        case .notEnrolled, .enrollmentFailed:
+            // Start the enrollment process (needs implementation in CameraManager)
+            LogManager.shared.log("Starting enrollment process...")
+            // Reset outcomes before starting
+            testResult = nil
+            enrollmentOutcome = nil
+            cameraManager.startEnrollmentSequence() // Assuming this method exists/will be added
+        case .enrollmentComplete:
+            // Start the liveness test
+            startTest()
+        default:
+            // Should not be tappable in other states due to .disabled modifier
+            LogManager.shared.log("Warning: Enrollment/Test button tapped in unexpected state: \(cameraManager.enrollmentState.rawValue)")
+            break
+        }
+    }
+    
+    private func handleEnrollmentStateChange(newState: EnrollmentState) {
+        // Clear results when enrollment starts or progresses
+        if [.promptCenter, .capturingCenter,
+            .promptLeft, .capturingLeft,
+            .promptRight, .capturingRight,
+            .promptUp, .capturingUp,
+            .promptDown, .capturingDown,
+            .promptCloser, .capturingCloser,
+            .promptFurther, .capturingFurther,
+            .calculatingThresholds].contains(newState) {
+            if testResult != nil || enrollmentOutcome != nil {
+                 testResult = nil
+                 enrollmentOutcome = nil
+                 LogManager.shared.log("Cleared previous results as enrollment is active.")
+            }
+        }
+        
+        // Set outcome when enrollment finishes
+        switch newState {
+        case .enrollmentComplete:
+            enrollmentOutcome = .success
+            LogManager.shared.log("Enrollment completed successfully.")
+        case .enrollmentFailed:
+            enrollmentOutcome = .failure
+            LogManager.shared.log("Enrollment failed.")
+        default:
+            // No outcome change needed for other states
+            break
+        }
     }
     
     // MARK: - Log Sharing
@@ -307,6 +494,10 @@ struct ContentView: View {
             return "No Face Detected!"
         case .insufficientData:
             return "Insufficient Data!"
+        case .fallbackSuccess:
+            return "Real Face Detected (Fallback)" // More descriptive text
+        case .fallbackFailure:
+            return "Spoof Detected (Fallback)" // More descriptive text
         }
     }
     
@@ -324,6 +515,36 @@ struct ContentView: View {
             return Color.red
         case .insufficientData:
             return Color.orange
+        case .fallbackSuccess:
+            return Color.orange // Use orange to indicate it wasn't a standard success
+        case .fallbackFailure:
+            return Color.orange.opacity(0.8) // Use dark orange for fallback failure?
+        }
+    }
+    
+    // MARK: - Enrollment Outcome Formatting
+    
+    /**
+     * Returns the appropriate text to display for an enrollment outcome.
+     */
+    private func enrollmentOutcomeText(for outcome: EnrollmentOutcome) -> String {
+        switch outcome {
+        case .success:
+            return "Enrollment Complete!"
+        case .failure:
+            return "Enrollment Failed. Please try again."
+        }
+    }
+    
+    /**
+     * Returns the appropriate background color for an enrollment outcome display.
+     */
+    private func enrollmentOutcomeBackground(for outcome: EnrollmentOutcome) -> Color {
+        switch outcome {
+        case .success:
+            return Color.green
+        case .failure:
+            return Color.red
         }
     }
 }
