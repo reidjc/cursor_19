@@ -69,72 +69,95 @@ The challenge results in `Failure` if:
 *   The performance overhead of continuous yaw tracking during the fallback phase is acceptable.
 *   Yaw angle interpretation (degrees vs. radians, sign convention for left/right) from the chosen iOS framework can be determined and aligned with the logic.
 
-## 5. Implementation Steps
+## 5. Implementation & Testing Phases (PoC)
 
-1.  **Yaw Data Source:**
-    *   Investigate `cursor_19`'s `ViewController`, `LivenessChecker`, or related classes (`ARSessionDelegate` / `Vision` handlers) to confirm how/if head pose (specifically yaw) is currently accessed.
-    *   If not available, implement yaw tracking using `ARKit` (`ARFaceAnchor`) or `Vision` (`VNDetectFaceRectanglesRequest` + `VNFaceObservation`). Prefer `ARKit` if already in use for depth data.
-    *   Determine the yaw angle unit (radians/degrees) and sign convention. Add conversion if necessary.
+This implementation will proceed in phases, with manual testing after each phase to validate functionality before proceeding.
 
-2.  **Challenge Logic Implementation:**
-    *   Create Swift equivalents for the Android `ChallengeType` enum (with only `.turnLeft`, `.turnRight`) and the `ChallengeState` data structure (to track `p1Detected`, `p2Detected`, `p3Detected`, `p1p2Array`, `p2p3Array`, `passed`, etc.).
-    *   Create a new Swift class, e.g., `HeadTurnChallengeProcessor`.
-    *   Port the core logic from `FaceProcessor.handleHeadChallenge` and its helper functions (`areArraysIdenticallyOrdered`, `isArrayDirectionallyCorrect`, `averageDifference`) into `HeadTurnChallengeProcessor`. Adapt for Swift syntax and the identified iOS yaw data source.
-    *   Implement methods in `HeadTurnChallengeProcessor` like `startChallenge(type: ChallengeType)` and `process(yaw: Float)` -> `ChallengeResult?` (returning `.pass`, `.fail`, or `nil` if ongoing).
+### Phase 1: Yaw Data Acquisition & Validation
 
-3.  **Integration into Liveness Flow:**
-    *   Modify the class responsible for the liveness test state (`LivenessChecker` or `TestResultManager`).
-    *   Add states for `fallbackChallengeIssued`, `fallbackChallengeTracking`.
-    *   In the logic where the fallback to hardcoded thresholds currently happens (after 5s timeout with face detected):
-        *   Instead of hardcoded checks, randomly select `ChallengeType.turnLeft` or `.turnRight`.
-        *   Instantiate/reset `HeadTurnChallengeProcessor`.
-        *   Start the 10-second challenge timer.
-        *   Update the UI to display the challenge instruction.
-        *   Transition state to `fallbackChallengeIssued`.
-    *   In the main frame processing loop (e.g., `ARSessionDelegate` or `Vision` completion handler):
-        *   If in `fallbackChallengeIssued` or `fallbackChallengeTracking` state:
-            *   Extract the current yaw angle.
-            *   Feed it to `HeadTurnChallengeProcessor.process(yaw:)`.
-            *   Handle the result:
-                *   If `.pass`: Stop timer, update UI (Success), set final liveness result to success.
-                *   If `.fail`: Stop timer, update UI (Failed), set final liveness result to failure/spoof.
-                *   If `nil`: Continue tracking.
-            *   Check the challenge timer; if expired: Update UI (Timeout/Failed), set final liveness result to failure/spoof.
-            *   Handle face tracking loss: If face is lost during the challenge, treat as failure.
+**Implementation:**
+1.  Investigate `cursor_19`'s `ViewController`, `LivenessChecker`, or related classes (`ARSessionDelegate` / `Vision` handlers) to confirm how/if head pose (specifically yaw) is currently accessed.
+2.  If not available, implement yaw tracking using `ARKit` (`ARFaceAnchor.transform`) or `Vision` (`VNDetectFaceRectanglesRequest` + `VNFaceObservation`). Prefer `ARKit` if already in use for depth data.
+3.  Determine the yaw angle unit (radians/degrees) and sign convention provided by the chosen framework. Add conversion to degrees if necessary, ensuring positive degrees mean head turned left (user's perspective) and negative means head turned right, consistent with the planned logic.
+4.  Temporarily log the calculated yaw angle to the console during the liveness test phase.
 
-4.  **UI Updates:**
-    *   Modify the `ViewController` or relevant UI code.
-    *   Add UI elements (e.g., a `UILabel`) to display challenge instructions ("Turn Head Left", "Turn Head Right").
-    *   Update the UI to show challenge status (e.g., progress indicator, success/failure message).
+**Manual Testing (Phase 1):**
+1.  Build and run the app on a device.
+2.  Start the liveness test.
+3.  Observe the console logs.
+4.  Turn your head left: Verify that the logged yaw angle increases (becomes more positive).
+5.  Turn your head right: Verify that the logged yaw angle decreases (becomes more negative).
+6.  Look straight ahead: Verify the logged yaw angle is close to 0.
+7.  Confirm the angles are logged frequently and appear stable.
+
+### Phase 2: Core Challenge Logic Implementation
+
+**Implementation:**
+1.  Create Swift equivalents for the Android `ChallengeType` enum (with only `.turnLeft`, `.turnRight`) and the `ChallengeState` data structure (to track `p1Detected`, `p2Detected`, `p3Detected`, `p1p2Array`, `p2p3Array`, `passed`, etc.).
+2.  Create a new Swift class: `HeadTurnChallengeProcessor`.
+3.  Port the core logic from the Android `liveness` project's `FaceProcessor.handleHeadChallenge` and its helper functions (`areArraysIdenticallyOrdered`, `isArrayDirectionallyCorrect`, `averageDifference`) into `HeadTurnChallengeProcessor`. Adapt for Swift syntax.
+4.  Implement methods in `HeadTurnChallengeProcessor`:
+    *   `startChallenge(type: ChallengeType)`: Resets state and sets the target challenge.
+    *   `process(yaw: Float)` -> `ChallengeResult?`: Takes a yaw angle (in degrees, matching Phase 1's output), updates the internal state machine (P1/P2/P3 detection, array population), performs verification checks if P3 is reached, and returns `.pass`, `.fail`, or `nil` (ongoing). Define a simple `ChallengeResult` enum (`pass`, `fail`, `inProgress`, `timeout`).
+    *   `reset()`: Clears the state.
+
+**Manual Testing (Phase 2):**
+*   **Requires temporary test harness code:** Add temporary buttons or controls in the UI to:
+    *   Trigger `startChallenge(.turnLeft)` or `startChallenge(.turnRight)` on the processor instance.
+    *   Manually input yaw angle values (e.g., via a slider or text field) and feed them to `process(yaw:)`.
+    *   Display the result (`pass`, `fail`, `inProgress`) returned by `process(yaw:)`.
+    *   Display the internal state (P1/P2/P3 detected, array contents).
+*   **Test Scenarios:**
+    1.  **Turn Left Success:** Start `turnLeft`. Input yaw sequence: 0, -2, 3 (P1 detected), 10, 20, 26 (P2 detected), 15, 10, 4 (P3 detected). Verify result becomes `.pass`. Check arrays for reasonable content and verification logic outcome.
+    2.  **Turn Right Success:** Start `turnRight`. Input yaw sequence: 0, 2, -3 (P1 detected), -10, -20, -28 (P2 detected), -15, -10, -4 (P3 detected). Verify result becomes `.pass`.
+    3.  **Failure (Wrong Turn):** Start `turnLeft`. Input yaw sequence: 0, -10, -20. Verify result remains `inProgress` or potentially transitions to a specific `.fail(reason: .wrongDirection)` state if implemented.
+    4.  **Failure (Insufficient Turn):** Start `turnLeft`. Input yaw sequence: 0, 5, 10, 15, 10, 5. Verify P2 is never detected, result remains `inProgress`. (Timeout would handle this in full integration).
+    5.  **Failure (No Return):** Start `turnLeft`. Input yaw sequence: 0, 5, 10, 28, 30, 28. Verify P3 is never detected, result remains `inProgress`.
+    6.  **Failure (Static Pose):** Start `turnLeft`. Input sequence simulating holding the head steady after P1, P2, or P3. Verify verification checks fail (e.g., identical sorted arrays, non-distinct average differences).
+
+### Phase 3: Integration into Liveness Flow & UI
+
+**Implementation:**
+1.  Remove temporary logging and test harnesses from Phase 1 & 2.
+2.  Instantiate `HeadTurnChallengeProcessor` within the appropriate class managing the liveness test (`LivenessChecker` or `TestResultManager`).
+3.  Modify the liveness test state machine: Add states like `fallbackChallengeInstructing`, `fallbackChallengeTracking`.
+4.  Integrate the challenge trigger: In the logic where the fallback to hardcoded thresholds currently occurs (after 5s timeout with face detected):
+    *   Randomly select `ChallengeType.turnLeft` or `.turnRight`.
+    *   Call `HeadTurnChallengeProcessor.startChallenge(type:)`.
+    *   Start a 10-second challenge timer.
+    *   Update the UI to display the instruction ("Turn Head Left" / "Turn Head Right").
+    *   Transition state to `fallbackChallengeInstructing` (allow a brief moment for user to read). Then transition to `fallbackChallengeTracking`.
+5.  Integrate yaw processing: In the main frame processing loop (`ARSessionDelegate` / `Vision` handler):
+    *   If in `fallbackChallengeTracking` state:
+        *   Get the yaw angle (from Phase 1 work).
+        *   Feed it to `HeadTurnChallengeProcessor.process(yaw:)`.
+        *   Handle the result:
+            *   If `.pass`: Stop timer, update UI ("Success!"), set final liveness result to `success`, transition out of fallback states.
+            *   If `.fail`: Stop timer, update UI ("Challenge Failed"), set final liveness result to `failure`/`spoof`, transition out.
+            *   If `nil` / `.inProgress`: Continue.
+        *   Check the 10s timer; if expired: Call `HeadTurnChallengeProcessor.reset()`, stop timer, update UI ("Timeout"), set final liveness result to `failure`/`spoof`, transition out.
+        *   Handle face tracking loss: If the underlying face tracking fails during the challenge, treat as `.fail`.
+6.  UI Updates:
+    *   Implement the actual `UILabel` or view to show challenge instructions.
+    *   Implement UI feedback for challenge success, failure, or timeout.
+
+**Manual Testing (Phase 3):**
+1.  Perform the liveness test enrollment if needed (to use personalized thresholds initially).
+2.  Start the liveness test.
+3.  **Deliberately fail the initial depth check:** Hold the device still or use a method known to fail the depth checks but keep the face detected (e.g., presenting a photo *if* the depth check is the primary differentiator). Verify the fallback challenge is triggered after 5 seconds.
+4.  Observe the UI instruction ("Turn Head Left" or "Turn Head Right").
+5.  **Test Success:** Perform the requested head turn correctly (turn, then return towards center) within 10 seconds. Verify the UI shows "Success!" and the final test result is positive. Repeat for both Left and Right challenges.
+6.  **Test Failure (Timeout):** Trigger the challenge but do not move your head. Verify the UI shows "Timeout" or "Failed" after 10 seconds and the final test result is negative.
+7.  **Test Failure (Wrong Turn):** Trigger "Turn Left", but turn your head right. Verify the UI shows "Challenge Failed" and the final test result is negative. Repeat for the "Turn Right" challenge.
+8.  **Test Failure (Insufficient Turn):** Trigger "Turn Left", but only turn slightly (e.g., 10 degrees) and return. Verify the UI shows "Challenge Failed" (likely via timeout in this PoC) and the final test result is negative.
+9.  **Test Failure (No Return):** Trigger "Turn Left", turn fully (>25 degrees), but *keep* your head turned. Verify the UI shows "Timeout" or "Failed" after 10 seconds and the final test result is negative.
+10. **Test Face Loss:** Trigger the challenge, start turning, then move the phone so the face is no longer detected. Verify the challenge fails immediately.
+11. Observe overall flow and UI responsiveness.
 
 ## 6. Build Steps
 
 *   Build the `cursor_19` project using Xcode as usual.
 *   Ensure any new Swift files (`HeadTurnChallengeProcessor`, etc.) are added to the target membership.
 
-## 7. Testing Strategy
-
-1.  **Unit Tests:**
-    *   Create unit tests for `HeadTurnChallengeProcessor`:
-        *   Test P1, P2, P3 detection logic with various yaw sequences and thresholds.
-        *   Test the array verification checks (`areArraysIdenticallyOrdered`, `isArrayDirectionallyCorrect`, `averageDifference`) with edge cases (empty arrays, static poses, correct sequences, incorrect sequences).
-        *   Test the `process(yaw:)` function for correct state transitions and result reporting.
-2.  **Integration Tests:**
-    *   Verify the fallback mechanism triggers correctly (only after 5s timeout *with* a face detected using personalized thresholds).
-    *   Verify the random selection between "Turn Left" and "Turn Right".
-    *   Verify UI updates correctly display instructions and results.
-    *   Verify the 10-second timeout triggers a failure.
-    *   Verify face loss during the challenge triggers a failure.
-    *   Verify the final liveness result is correctly set based on challenge outcome (Pass/Fail/Timeout).
-3.  **Manual Tests:**
-    *   Perform the liveness test enrollment.
-    *   Perform the liveness test and deliberately fail the initial depth check (e.g., hold a photo) to trigger the fallback.
-    *   Test completing the "Turn Left" challenge correctly.
-    *   Test completing the "Turn Right" challenge correctly.
-    *   Test failing by turning the wrong way.
-    *   Test failing by not turning enough.
-    *   Test failing by turning too slowly (timeout).
-    *   Test failing by turning correctly but not returning towards the center.
-    *   Test under different lighting conditions.
-    *   Test with different devices if possible.
-    *   Observe UI feedback throughout the process. 
+// Delete the following section entirely:
+// ## 7. Testing Strategy ... (all content within this section) 
