@@ -7,18 +7,10 @@ enum EnrollmentState: String { // Conforming to String for potential logging/deb
     case notEnrolled
     case promptCenter
     case capturingCenter
-    case promptLeft
-    case capturingLeft
-    case promptRight
-    case capturingRight
-    case promptUp
-    case capturingUp
-    case promptDown
-    case capturingDown
     case promptCloser
-    case capturingCloser
+    case capturingCloserMovement
     case promptFurther
-    case capturingFurther
+    case capturingFurtherMovement
     case calculatingThresholds
     case enrollmentComplete
     case enrollmentFailed
@@ -320,31 +312,11 @@ class CameraManager: NSObject, ObservableObject {
     private let enrollmentSequence: [EnrollmentState] = [
         .promptCenter,
         .capturingCenter,
-        .promptLeft,
-        .capturingLeft,
-        .promptCenter, // Return to center
-        .capturingCenter,
-        .promptRight,
-        .capturingRight,
-        .promptCenter, // Return to center
-        .capturingCenter,
-        .promptUp,
-        .capturingUp,
-        .promptCenter, // Return to center
-        .capturingCenter,
-        .promptDown,
-        .capturingDown,
-        .promptCenter, // Return to center
-        .capturingCenter,
         .promptCloser,
-        .capturingCloser,
-        .promptCenter, // Return to center
-        .capturingCenter,
+        .capturingCloserMovement,
         .promptFurther,
-        .capturingFurther,
-        .promptCenter, // Final center pose
-        .capturingCenter,
-        .calculatingThresholds // Final step
+        .capturingFurtherMovement,
+        .calculatingThresholds
     ]
     
     private var currentEnrollmentStepIndex = -1
@@ -403,7 +375,7 @@ class CameraManager: NSObject, ObservableObject {
             
             // Handle automatic transitions after delays
             switch newState {
-            case .promptCenter, .promptLeft, .promptRight, .promptUp, .promptDown, .promptCloser, .promptFurther:
+            case .promptCenter, .promptCloser, .promptFurther:
                 // Schedule transition to corresponding 'capturing' state after a delay
                 let workItem = DispatchWorkItem { [weak self] in
                     self?.advanceEnrollmentState() // Move to the next step in the sequence (which should be a capturing state)
@@ -411,7 +383,7 @@ class CameraManager: NSObject, ObservableObject {
                 self.enrollmentTimerWorkItem = workItem
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem) // 1.5 second delay
                 
-            case .capturingCenter, .capturingLeft, .capturingRight, .capturingUp, .capturingDown, .capturingCloser, .capturingFurther:
+            case .capturingCenter, .capturingCloserMovement, .capturingFurtherMovement:
                 // Data capture logic (Step 1.5) will eventually trigger advanceEnrollmentState()
                 // Start a timeout timer for this capture state
                 let timeoutWorkItem = DispatchWorkItem { [weak self] in
@@ -491,8 +463,8 @@ class CameraManager: NSObject, ObservableObject {
     private func calculateThresholds() -> UserDepthThresholds? {
         enrollmentDataLock.lock()
         let centerResults = capturedEnrollmentData[.capturingCenter] ?? []
-        let closerResults = capturedEnrollmentData[.capturingCloser] ?? []
-        let furtherResults = capturedEnrollmentData[.capturingFurther] ?? []
+        let closerResults = capturedEnrollmentData[.capturingCloserMovement] ?? []
+        let furtherResults = capturedEnrollmentData[.capturingFurtherMovement] ?? []
         enrollmentDataLock.unlock()
         
         LogManager.shared.log("Starting threshold calculation with Center: \(centerResults.count), Closer: \(closerResults.count), Further: \(furtherResults.count) frames.")
@@ -873,9 +845,7 @@ class CameraManager: NSObject, ObservableObject {
     
     func depthDataOutput(_ output: AVCaptureDepthDataOutput, didOutput depthData: AVDepthData, timestamp: CMTime, connection: AVCaptureConnection) {
         // Or if we are in an enrollment capturing state AND a face is detected
-        let isEnrollingAndCapturing = [.capturingCenter, .capturingLeft, .capturingRight, 
-                                     .capturingUp, .capturingDown, .capturingCloser, 
-                                     .capturingFurther].contains(enrollmentState)
+        let isEnrollingAndCapturing = [.capturingCenter, .capturingCloserMovement, .capturingFurtherMovement].contains(enrollmentState)
                                      
         let shouldProcessForLivenessTest = isTestActive && faceDetected && !isEnrollingAndCapturing
         let shouldProcessForEnrollment = isEnrollingAndCapturing && faceDetected
