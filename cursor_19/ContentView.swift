@@ -32,6 +32,23 @@ import UIKit
  *    - Failure: A face was detected but determined to be a spoof
  *    - Timeout: No face was detected within the time limit
  */
+
+// MARK: - Helper Shapes
+
+struct OvalShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        // Calculate oval bounds based on the view's rect
+        // Make it slightly smaller than the full view and portrait oriented
+        let width = rect.width * 0.75
+        let height = rect.height * 0.6 // Adjust height aspect ratio if needed
+        let xOffset = (rect.width - width) / 2
+        let yOffset = (rect.height - height) / 2
+        let ovalRect = CGRect(x: xOffset, y: yOffset, width: width, height: height)
+        
+        return Path(ellipseIn: ovalRect)
+    }
+}
+
 struct ContentView: View {
     // MARK: - Properties
     
@@ -69,6 +86,51 @@ struct ContentView: View {
     
     // MARK: - Computed Properties
     
+    /// Target scale factor for the oval during the center/test phase
+    private let targetOvalScale: CGFloat = 1.0
+    /// Scale factor for the oval when guiding user closer
+    private let closerOvalScale: CGFloat = 0.7
+    /// Scale factor for the oval when guiding user further
+    private let furtherOvalScale: CGFloat = 1.3
+
+    /// Determines the current scale factor for the oval guide
+    private var currentOvalScale: CGFloat {
+        switch cameraManager.enrollmentState {
+        case .capturingCenter, .enrollmentComplete, .notEnrolled, .enrollmentFailed:
+            // Also use target scale during standard liveness test (when enrollmentComplete)
+            return targetOvalScale 
+        case .capturingCloserMovement:
+            return closerOvalScale
+        case .capturingFurtherMovement:
+            return furtherOvalScale
+        // Intermediate states (prompts, calculating) can use the target scale
+        // or potentially animate from/to the previous/next scale if we add animation later.
+        case .promptCenter, .promptCloser, .promptFurther, .calculatingThresholds:
+            return targetOvalScale // Default to target for simplicity
+        }
+    }
+    
+    /// Determines the color of the oval guide
+    private var ovalColor: Color {
+        switch cameraManager.enrollmentState {
+        case .capturingCenter, .capturingCloserMovement, .capturingFurtherMovement:
+            return .green // Green during active capture phases
+        case .enrollmentComplete, .notEnrolled, .enrollmentFailed:
+             // White/clearer during idle or test states
+             // Consider making it more prominent during the test?
+             return .white.opacity(0.7)
+        default:
+            // White during prompts/calculating
+            return .white
+        }
+    }
+    
+    /// Determines if the oval should be visible
+    private var showOval: Bool {
+        // Show during enrollment and during active liveness test
+        return isTestRunning || cameraManager.enrollmentState != .notEnrolled
+    }
+    
     /// Determines if the main action button should be disabled
     private var isActionButtonDisabled: Bool {
         isTestRunning ||
@@ -95,18 +157,21 @@ struct ContentView: View {
     /// Provides the instruction or status text displayed above the button
     private var instructionText: String? {
         if isTestRunning {
-            return "Testing: \(String(format: "%.1f", timeRemaining))s"
+            // Test instruction
+            return "Keep face centered in oval"
         }
         switch cameraManager.enrollmentState {
-        case .promptCenter: return "Look Straight Ahead"
-        case .capturingCenter: return "Look Straight Ahead"
-        case .promptCloser: return "Slowly move phone closer"
+        case .promptCenter: return "Fit face in oval"
+        case .capturingCenter: return "Hold steady..."
+        case .promptCloser: return "Move closer to keep face in shrinking oval"
         case .capturingCloserMovement: return "Capturing... Keep moving closer"
-        case .promptFurther: return "Slowly move phone further away"
-        case .capturingFurtherMovement: return "Capturing... Keep moving further away"
+        case .promptFurther: return "Move back to keep face in growing oval"
+        case .capturingFurtherMovement: return "Capturing... Keep moving back"
         case .calculatingThresholds: return "Calculating..."
-        // No text for other states like notEnrolled, complete, failed, or during liveness test idle
-        default: return nil
+        // For enrollment complete, show standard button text instead of instruction
+        case .enrollmentComplete: return nil 
+        // No specific instruction text needed for idle/failed states (button text suffices)
+        default: return nil 
         }
     }
     
@@ -126,6 +191,17 @@ struct ContentView: View {
         ZStack {
             // Camera preview - full screen
             CameraPreview(cameraManager: cameraManager)
+                .overlay(
+                    // Add the oval overlay
+                    Group {
+                        if showOval {
+                            OvalShape()
+                                .stroke(ovalColor, lineWidth: 4) // Use dynamic color
+                                .scaleEffect(currentOvalScale) // Use dynamic scale
+                                .animation(.easeInOut(duration: 0.5), value: currentOvalScale) // Animate scale changes
+                        }
+                    }
+                )
                 .edgesIgnoringSafeArea(.all)
                 .onAppear {
                     cameraManager.setupAndStartSession()
