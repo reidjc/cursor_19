@@ -40,7 +40,7 @@ struct OvalShape: Shape {
         // Calculate oval bounds based on the view's rect
         // Make it slightly smaller than the full view and portrait oriented
         let width = rect.width * 0.75
-        let height = rect.height * 0.6 // Adjust height aspect ratio if needed
+        let height = rect.height * 0.5 // Reduced height multiplier from 0.6 to 0.5
         let xOffset = (rect.width - width) / 2
         let yOffset = (rect.height - height) / 2
         let ovalRect = CGRect(x: xOffset, y: yOffset, width: width, height: height)
@@ -262,88 +262,71 @@ struct ContentView: View {
                             .padding(.horizontal)
                     }
                 }
-                .padding(.top, 50) // Add padding from the top safe area/notch
-                .padding(.bottom, 10) // Padding below the top elements
-
-                Spacer() // Pushes button/timer to the bottom
+                .padding(.horizontal) // Horizontal padding for banner
+                // Reduced top padding significantly, relies more on safe area
+                .padding(.top, 10) 
+                // Removed bottom padding from here
+                
+                Spacer() // This will push the bottom HStack down
                                 
-                // Container for bottom elements
-                VStack(spacing: 15) {
-                    // Instruction / Status Text Area - REMOVED
-                    /*
-                    if let instruction = instructionText {
-                        Text(instruction)
-                            .font(.headline)
-                            .foregroundColor(instructionTextColor) // Use dynamic color
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 15)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            // Use primary foreground for contrast on material
-                            .foregroundColor(.primary) 
-                            .transition(.opacity.animation(.easeInOut))
-                            // Add fixed height to prevent layout jumps? Maybe not needed if Spacer handles it.
-                            // .frame(height: 40) 
-                    } else {
-                        // Placeholder to maintain layout height when no text is shown
-                        // Adjust height to match the approximate height of the text+padding
-                        Spacer().frame(height: 30) // Adjust height as needed
-                    }
-                    */
+                // Container for bottom elements - Changed to HStack
+                HStack(spacing: 15) { 
                     
-                    // Single Button that changes appearance and action based on state
+                    // Reset Enrollment Button (Icon)
+                    Button {
+                        cameraManager.resetEnrollment()
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise.circle")
+                            .font(.title2) 
+                            .padding(10)   
+                    }
+                    .background(.ultraThinMaterial, in: Circle()) 
+                    // Removed opacity modifier to keep button visible
+                    // Set disabled state based on test running or wrong enrollment state
+                    .disabled(isTestRunning || !(cameraManager.enrollmentState == .enrollmentComplete || cameraManager.enrollmentState == .enrollmentFailed))
+                    // Apply tint dynamically based on active/disabled state
+                    .tint( (cameraManager.enrollmentState == .enrollmentComplete || cameraManager.enrollmentState == .enrollmentFailed) && !isTestRunning ? .orange : .gray )
+                    .frame(width: 50, height: 50) 
+
+                    // Central Action Button (Takes up remaining space)
                     Button(action: { 
                         handleEnrollmentOrTestButtonTap()
                     }) { 
-                        // Apply styling directly to the label content
-                        // Display instruction/timer text if available, otherwise action button text
                         Text(instructionText ?? actionButtonText)
                         .font(.headline)
-                        // Set text color: Green if capturing, white otherwise
                         .foregroundColor(instructionTextColor == .green ? .green : .white)
-                        .padding() // Padding inside the label's background
-                        .frame(maxWidth: .infinity) // Frame applied to label
-                        // Background applied to label - Use gray when disabled, blue otherwise
-                        .background(isActionButtonDisabled ? Color.gray : Color.blue)
+                        .padding() 
+                        .frame(maxWidth: .infinity) // Allow to expand
+                        .frame(height: 50) // Match icon button height
+                        .background(isActionButtonDisabled ? Color.gray.opacity(0.7) : Color.blue) // Adjust disabled look
                         .cornerRadius(15)
                     }
-                    // Apply plain button style to prevent default hit testing interference
                     .buttonStyle(.plain)
-                    // Define hit area based on the button's frame (which should match the label frame)
                     .contentShape(Rectangle())
-                    // Disable button based on computed property
                     .disabled(isActionButtonDisabled)
-                    .transition(.opacity.animation(.easeInOut)) // Keep transition smooth
+                    .transition(.opacity.animation(.easeInOut))
                     
-                    // Share Logs Button - Always present for layout, but hidden/disabled when testing
+                    // Share Logs Button (Icon)
                     Button { 
                         shareLogs()
                     } label: {
-                        // Use only the icon for a cleaner look
                         Image(systemName: "square.and.arrow.up")
-                            // Add padding inside the button if needed
-                            // .padding(.horizontal, 5) 
+                            .font(.title2) // Adjust icon size
+                            .padding(10)
                     }
-                    .buttonStyle(.bordered) // Keep bordered style for a defined tap area
-                    .tint(.secondary) // Changed back from .gray for better visibility
-                    .opacity(isTestRunning ? 0 : 1) // Hide when testing
-                    .disabled(isTestRunning) // Disable when testing
-                    
-                    // Reset Enrollment Button (for testing)
-                    Button("Reset Enrollment") {
-                        cameraManager.resetEnrollment()
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.orange)
-                    // Only show reset button if enrollment is complete or failed
-                    .opacity(cameraManager.enrollmentState == .enrollmentComplete || cameraManager.enrollmentState == .enrollmentFailed ? 1 : 0)
-                    .disabled(isTestRunning) // Also disable during test
+                    .background(.ultraThinMaterial, in: Circle())
+                    .tint(.secondary)
+                    .opacity(isTestRunning ? 0 : 1)
+                    .disabled(isTestRunning)
+                    .frame(width: 50, height: 50) // Give it a fixed frame
 
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 30) // Bottom safe area padding
+                .padding(.horizontal) // Keep horizontal padding for the HStack
+                // Reduced bottom padding, relies more on safe area
+                .padding(.bottom, 10) 
 
             }
-            .animation(.easeInOut, value: isTestRunning) // Animate changes based on test running state
+            .animation(.easeInOut, value: isTestRunning) // Keep animations
             .animation(.easeInOut, value: testResult)    // Animate changes based on result state
             .animation(.easeInOut, value: enrollmentOutcome) // Animate enrollment outcome changes
             .animation(.easeInOut, value: cameraManager.enrollmentState) // Animate enrollment state changes
