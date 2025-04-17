@@ -81,7 +81,12 @@ class CameraManager: NSObject, ObservableObject {
     private let requiredCenterToCloseDelta: Float = 0.15 // 15cm minimum closer movement
     private let requiredCloseToFarDelta: Float = 0.25    // 25cm minimum further movement from closest point
     // --- End Enrollment Distance Tracking ---
-    
+
+    // --- Consecutive Frame Tracking for Liveness Test ---
+    private var consecutiveSuccessFrames: Int = 0
+    private let requiredConsecutiveFrames: Int = 3 // Require 3 consecutive passes
+    // --- End Consecutive Frame Tracking ---
+
     /// Stores the most recently processed depth values for potential fallback check
     private var lastProcessedDepthValues: [Float]?
     
@@ -283,6 +288,8 @@ class CameraManager: NSObject, ObservableObject {
         faceWasDetectedThisTest = false
         // Reset enrollment data if starting fresh
         resetEnrollmentData()
+        // Reset consecutive frame counter for liveness test
+        consecutiveSuccessFrames = 0
         // Activate test mode (enables depth processing etc.)
         isTestActive = true 
         LogManager.shared.log("CameraManager prepared.")
@@ -561,7 +568,6 @@ class CameraManager: NSObject, ObservableObject {
         let allRanges = allCombinedResults.map { $0.range }
         let allEdgeStdDevs = allCombinedResults.map { $0.edgeStdDev }
         let allCenterStdDevs = allCombinedResults.map { $0.centerStdDev }
-        let allGradientMeans = allCombinedResults.map { $0.gradientMean }
         let allGradientStdDevs = allCombinedResults.map { $0.gradientStdDev }
         
         // Helper to get min/max bounds for a metric across poses
@@ -1012,21 +1018,39 @@ class CameraManager: NSObject, ObservableObject {
                  }
             // --- Liveness Test Logic ---
             } else if shouldProcessForLivenessTest {
-                // Original liveness check logic - runs with currently set thresholds (user or hardcoded)
-                let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: true)
-                let finalIsLive = isLive // No per-frame fallback here
+                // Perform the liveness check BUT do not store the result directly via the detector
+                let isLive = self.faceDetector.checkLiveness(depthData: depthValues, storeResult: false)
                 
-                 // Update isLiveFace on main thread using the final outcome
+                if isLive {
+                    self.consecutiveSuccessFrames += 1
+                    LogManager.shared.log("Debug: Liveness check PASSED for frame. Consecutive successes: \(self.consecutiveSuccessFrames)/\(self.requiredConsecutiveFrames)")
+                    
+                    if self.consecutiveSuccessFrames >= self.requiredConsecutiveFrames {
+                        // --- REACHED REQUIRED CONSECUTIVE PASSES --- 
+                        LogManager.shared.log("Info: Reached \(self.requiredConsecutiveFrames) consecutive successful frames. Setting success flag.")
+                        // Call the new method to set the flag
+                        self.faceDetector.testResultManager.markTestAsSuccessful()
+                        // Reset counter after success is signaled
+                        self.consecutiveSuccessFrames = 0 
+                    }
+                } else {
+                    // --- LIVENESS CHECK FAILED FOR FRAME --- 
+                    if self.consecutiveSuccessFrames > 0 {
+                         LogManager.shared.log("Debug: Liveness check FAILED for frame. Resetting consecutive success count from \(self.consecutiveSuccessFrames) to 0.")
+                    }
+                    // Reset counter on any single failure
+                    self.consecutiveSuccessFrames = 0
+                }
+                
+                 // Update isLiveFace on main thread based on the *instantaneous* result for UI feedback
                  DispatchQueue.main.async {
-                     // Only update if the state actually changed to avoid unnecessary UI refreshes
-                     if self.isLiveFace != finalIsLive {
-                         self.isLiveFace = finalIsLive
+                     if self.isLiveFace != isLive {
+                         self.isLiveFace = isLive
                      }
                  }
 
-                // Also update lastProcessedDepthValues when isLiveFace is set
-                // Ensure we have the data associated with the final UI state
-                self.lastProcessedDepthValues = depthValues
+                 // Store last processed values regardless of pass/fail for potential fallback
+                 self.lastProcessedDepthValues = depthValues
             }
         }
         DispatchQueue.global(qos: .userInitiated).async(execute: workItem)

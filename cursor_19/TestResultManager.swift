@@ -32,6 +32,23 @@ class TestResultManager {
         LogManager.shared.log("--- Starting New Test (Manager ID: \(currentTestId?.uuidString.prefix(8) ?? "none")) ---")
     }
     
+    /**
+     * Allows external callers (like CameraManager) to explicitly mark the current test as successful.
+     * This is used when the success condition (e.g., consecutive passes) is met outside of this manager.
+     */
+    func markTestAsSuccessful() {
+        // Ensure we don't accidentally mark a test successful if it wasn't started
+        guard currentTestId != nil else {
+            LogManager.shared.log("Warning: markTestAsSuccessful called but no test is currently active.")
+            return
+        }
+        // Only set if not already set to avoid redundant logging if called multiple times
+        if !currentTestWasSuccessful {
+            currentTestWasSuccessful = true
+            LogManager.shared.log("Debug: Test marked as successful externally (ID: \(currentTestId?.uuidString.prefix(8) ?? "none")).")
+        }
+    }
+    
     // MARK: - Printing Results
 
     /**
