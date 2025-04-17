@@ -463,61 +463,48 @@ class CameraManager: NSObject, ObservableObject {
     private func calculateThresholds() -> UserDepthThresholds? {
         enrollmentDataLock.lock()
         let centerResults = capturedEnrollmentData[.capturingCenter] ?? []
-        let closerResults = capturedEnrollmentData[.capturingCloserMovement] ?? []
-        let furtherResults = capturedEnrollmentData[.capturingFurtherMovement] ?? []
+        let closerMovementResults = capturedEnrollmentData[.capturingCloserMovement] ?? []
+        let furtherMovementResults = capturedEnrollmentData[.capturingFurtherMovement] ?? []
         enrollmentDataLock.unlock()
         
-        LogManager.shared.log("Starting threshold calculation with Center: \(centerResults.count), Closer: \(closerResults.count), Further: \(furtherResults.count) frames.")
+        LogManager.shared.log("Starting threshold calculation with Center: \(centerResults.count), Closer Movement: \(closerMovementResults.count), Further Movement: \(furtherMovementResults.count) frames.")
         
-        let minFramesPerPose = 3 // Require at least 3 frames for a pose to be included
-        guard centerResults.count >= minFramesPerPose else { 
-            LogManager.shared.log("Error: Insufficient center pose data captured (\(centerResults.count) < \(minFramesPerPose)). Cannot calculate thresholds.")
+        let minFramesPerPose = 3 // Require at least 3 frames for a pose/phase to be included
+        guard centerResults.count >= minFramesPerPose || closerMovementResults.count >= minFramesPerPose || furtherMovementResults.count >= minFramesPerPose else {
+            LogManager.shared.log("Error: Insufficient data captured across all enrollment phases (Center: \(centerResults.count), Closer: \(closerMovementResults.count), Further: \(furtherMovementResults.count)). Min required: \(minFramesPerPose). Cannot calculate thresholds.")
             return nil
         }
         
-        // --- Calculate statistics for each relevant pose dataset ---
-        var poseStatsList: [MetricStats] = []
+        // --- Calculate statistics for each relevant pose dataset --- 
+        var poseStatsList: [MetricStats] = [] // Might not be used by final threshold logic
         
-        if let centerStats = calculateMetricStats(from: centerResults, poseName: "Center") {
+        if centerResults.count >= minFramesPerPose, let centerStats = calculateMetricStats(from: centerResults, poseName: "Center") {
             poseStatsList.append(centerStats)
+            LogManager.shared.log("Included Center phase data in stats calculation.")
         }
-        if closerResults.count >= minFramesPerPose, let closerStats = calculateMetricStats(from: closerResults, poseName: "Closer") {
+        if closerMovementResults.count >= minFramesPerPose, let closerStats = calculateMetricStats(from: closerMovementResults, poseName: "CloserMovement") {
              poseStatsList.append(closerStats)
-             LogManager.shared.log("Included Closer pose data in threshold calculation.")
+             LogManager.shared.log("Included Closer Movement phase data in stats calculation.")
         } else {
-            LogManager.shared.log("Warning: Insufficient Closer pose data (\(closerResults.count) < \(minFramesPerPose)). Skipping for threshold calculation.")
+            LogManager.shared.log("Warning: Insufficient Closer Movement data (\(closerMovementResults.count) < \(minFramesPerPose)). Skipping for stats calculation.")
         }
-        if furtherResults.count >= minFramesPerPose, let furtherStats = calculateMetricStats(from: furtherResults, poseName: "Further") {
+        if furtherMovementResults.count >= minFramesPerPose, let furtherStats = calculateMetricStats(from: furtherMovementResults, poseName: "FurtherMovement") {
              poseStatsList.append(furtherStats)
-             LogManager.shared.log("Included Further pose data in threshold calculation.")
+             LogManager.shared.log("Included Further Movement phase data in stats calculation.")
         } else {
-             LogManager.shared.log("Warning: Insufficient Further pose data (\(furtherResults.count) < \(minFramesPerPose)). Skipping for threshold calculation.")
+             LogManager.shared.log("Warning: Insufficient Further Movement data (\(furtherMovementResults.count) < \(minFramesPerPose)). Skipping for stats calculation.")
         }
         
-        guard !poseStatsList.isEmpty else {
-            LogManager.shared.log("Error: Could not calculate statistics for any valid pose.")
-            return nil // Should be prevented by initial centerResults check, but good practice
-        }
-        
-        // --- Combine stats to get overall min/max bounds --- 
-        
-        // Gather all raw metric values from included poses
-        let allResults = poseStatsList.flatMap { _ in 
-            // Need to re-access the original data based on which poses were included
-            // This is inefficient, better to pass the actual results used for stats
-            // Let's refactor calculateMetricStats to return raw values or modify approach.
-            // --- REVISED APPROACH: Calculate min/max observed directly --- 
-            [] as [LivenessCheckResults] // Placeholder - will be replaced below
-        }
+        // --- REVISED APPROACH: Calculate min/max observed directly from all combined results --- 
         enrollmentDataLock.lock()
         var allCombinedResults: [LivenessCheckResults] = []
         if centerResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: centerResults) }
-        if closerResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: closerResults) }
-        if furtherResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: furtherResults) }
+        if closerMovementResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: closerMovementResults) }
+        if furtherMovementResults.count >= minFramesPerPose { allCombinedResults.append(contentsOf: furtherMovementResults) }
         enrollmentDataLock.unlock()
 
         guard !allCombinedResults.isEmpty else {
-            LogManager.shared.log("Error: No combined results available for min/max observed calculation.")
+            LogManager.shared.log("Error: No combined results available for calculation after filtering.")
             return nil
         }
 
