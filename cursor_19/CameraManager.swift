@@ -73,6 +73,15 @@ class CameraManager: NSObject, ObservableObject {
     /// Lock for thread-safe access to capturedEnrollmentData
     private let enrollmentDataLock = NSLock()
     
+    // --- Enrollment Distance Tracking ---
+    private var avgCenterDistance: Float? = nil
+    private var avgCloserDistance: Float? = nil
+    private var avgFurtherDistance: Float? = nil
+    
+    private let requiredCenterToCloseDelta: Float = 0.15 // 15cm minimum closer movement
+    private let requiredCloseToFarDelta: Float = 0.25    // 25cm minimum further movement from closest point
+    // --- End Enrollment Distance Tracking ---
+    
     /// Stores the most recently processed depth values for potential fallback check
     private var lastProcessedDepthValues: [Float]?
     
@@ -286,7 +295,46 @@ class CameraManager: NSObject, ObservableObject {
         enrollmentDataLock.lock()
         capturedEnrollmentData.removeAll()
         enrollmentDataLock.unlock()
-        LogManager.shared.log("Cleared captured enrollment data.")
+        // Reset distance tracking variables
+        avgCenterDistance = nil
+        avgCloserDistance = nil
+        avgFurtherDistance = nil
+        LogManager.shared.log("Cleared captured enrollment data and distance tracking.")
+    }
+
+    /**
+     * Clears captured enrollment data for a specific state.
+     * - Parameter state: The EnrollmentState to clear data for.
+     */
+    private func clearEnrollmentData(for state: EnrollmentState) {
+        enrollmentDataLock.lock()
+        capturedEnrollmentData[state]?.removeAll()
+        // Or, more robustly ensure the key exists but the array is empty:
+        // capturedEnrollmentData[state] = [] 
+        enrollmentDataLock.unlock()
+        LogManager.shared.log("Cleared captured enrollment data for state: \(state.rawValue)")
+    }
+    
+    /**
+     * Calculates the average mean depth from the captured LivenessCheckResults for a specific state.
+     * - Parameter state: The EnrollmentState to calculate the average for.
+     * - Returns: The average mean depth, or nil if no data or an error occurs.
+     */
+    private func calculateAverageMeanDepth(for state: EnrollmentState) -> Float? {
+        enrollmentDataLock.lock()
+        let results = capturedEnrollmentData[state] ?? []
+        enrollmentDataLock.unlock()
+
+        guard !results.isEmpty else {
+            LogManager.shared.log("Warning: No LivenessCheckResults found for state \(state.rawValue) to calculate average depth.")
+            return nil
+        }
+
+        let means = results.map { $0.mean }
+        let average = means.reduce(0, +) / Float(means.count)
+        
+        LogManager.shared.log("Calculated average mean depth for state \(state.rawValue): \(average)")
+        return average
     }
 
     /**
@@ -889,11 +937,78 @@ class CameraManager: NSObject, ObservableObject {
                  
                  LogManager.shared.log("Debug: Captured frame \(capturedCount)/\(self.framesNeededPerPose) for \(currentPoseState.rawValue)")
                  
-                 // Check if enough frames are collected for the current pose
+                 // --- Check if enough frames collected AND perform distance validation --- 
                  if capturedCount >= self.framesNeededPerPose {
-                     LogManager.shared.log("Info: Sufficient frames captured for \(currentPoseState.rawValue). Advancing state.")
-                     // Advance to the next state (e.g., next prompt or calculating)
-                     self.advanceEnrollmentState()
+                    
+                     guard let averageDepth = self.calculateAverageMeanDepth(for: currentPoseState) else {
+                         LogManager.shared.log("Error: Could not calculate average depth for state \(currentPoseState.rawValue). Failing enrollment.")
+                         self.updateEnrollmentState(to: .enrollmentFailed)
+                         return // Exit work item early
+                     }
+
+                     switch currentPoseState {
+                     case .capturingCenter:
+                         // Store center distance and advance
+                         self.avgCenterDistance = averageDepth
+                         LogManager.shared.log("Info: Sufficient frames captured for Center. Stored avg distance: \(averageDepth). Advancing state.")
+                         self.advanceEnrollmentState()
+                         
+                     case .capturingCloserMovement:
+                         // Store closer distance and validate
+                         self.avgCloserDistance = averageDepth
+                         guard let centerDist = self.avgCenterDistance else {
+                             LogManager.shared.log("Error: avgCenterDistance is nil. Cannot validate closer movement. Failing enrollment.")
+                             self.updateEnrollmentState(to: .enrollmentFailed)
+                             return
+                         }
+                         let actualDelta = centerDist - averageDepth
+                         if actualDelta >= self.requiredCenterToCloseDelta {
+                             LogManager.shared.log("Info: Sufficient frames captured for Closer Movement. Stored avg distance: \(averageDepth). Delta (\(actualDelta)) meets requirement (≥\(self.requiredCenterToCloseDelta)). Advancing state.")
+                             self.advanceEnrollmentState()
+                         } else {
+                             // --- INSUFFICIENT CLOSER MOVEMENT: Clear data and wait for more movement --- 
+                             LogManager.shared.log("Warning: Insufficient closer movement detected (Required delta: ≥\(self.requiredCenterToCloseDelta), Actual delta: \(actualDelta)). Resetting frame count for this phase.")
+                             // Clear the insufficient data for this state
+                             self.clearEnrollmentData(for: .capturingCloserMovement)
+                             // DO NOT change state, just return and let capture continue for this state
+                             return // Exit work item, wait for user to move more
+                         }
+                         
+                     case .capturingFurtherMovement:
+                         // Store further distance and validate
+                         self.avgFurtherDistance = averageDepth
+                         guard let centerDist = self.avgCenterDistance, let closerDist = self.avgCloserDistance else {
+                             LogManager.shared.log("Error: avgCenterDistance or avgCloserDistance is nil. Cannot validate further movement. Failing enrollment.")
+                             self.updateEnrollmentState(to: .enrollmentFailed)
+                             return
+                         }
+                         let actualCloseToFarDelta = averageDepth - closerDist
+                         let isFurtherThanCenter = averageDepth > centerDist
+                         
+                         let check1 = actualCloseToFarDelta >= self.requiredCloseToFarDelta
+                         let check2 = isFurtherThanCenter
+                         
+                         if check1 && check2 {
+                             LogManager.shared.log("Info: Sufficient frames captured for Further Movement. Stored avg distance: \(averageDepth). Close->Far Delta (\(actualCloseToFarDelta) ≥ \(self.requiredCloseToFarDelta)) AND Further > Center passed. Advancing state.")
+                             self.advanceEnrollmentState() // Advance to calculatingThresholds
+                         } else {
+                             // --- INSUFFICIENT FURTHER MOVEMENT: Clear data and wait for more movement --- 
+                             var reason = "Insufficient further movement detected."
+                             if !check1 { reason += " Required close-to-far delta: ≥\(self.requiredCloseToFarDelta), Actual: \(actualCloseToFarDelta)." }
+                             if !check2 { reason += " Further distance (\(averageDepth)) not greater than center distance (\(centerDist))." }
+                             LogManager.shared.log("Warning: \(reason) Resetting frame count for this phase.")
+                             // Clear the insufficient data for this state
+                             self.clearEnrollmentData(for: .capturingFurtherMovement)
+                             // DO NOT change state, just return and let capture continue for this state
+                             return // Exit work item, wait for user to move more
+                         }
+
+                     default:
+                        // Should not happen for the defined sequence, but handle defensively
+                        LogManager.shared.log("Warning: Reached frame count completion in unexpected state: \(currentPoseState.rawValue)")
+                        // Optionally advance anyway or fail?
+                        self.advanceEnrollmentState() 
+                     }
                  }
             // --- Liveness Test Logic ---
             } else if shouldProcessForLivenessTest {
