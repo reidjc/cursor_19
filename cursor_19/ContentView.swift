@@ -73,12 +73,8 @@ struct ContentView: View {
     private var isActionButtonDisabled: Bool {
         isTestRunning ||
         [.promptCenter, .capturingCenter,
-         .promptLeft, .capturingLeft,
-         .promptRight, .capturingRight,
-         .promptUp, .capturingUp,
-         .promptDown, .capturingDown,
-         .promptCloser, .capturingCloser,
-         .promptFurther, .capturingFurther,
+         .promptCloser, .capturingCloserMovement,
+         .promptFurther, .capturingFurtherMovement,
          .calculatingThresholds].contains(cameraManager.enrollmentState)
     }
     
@@ -104,18 +100,10 @@ struct ContentView: View {
         switch cameraManager.enrollmentState {
         case .promptCenter: return "Look Straight Ahead"
         case .capturingCenter: return "Look Straight Ahead"
-        case .promptLeft: return "Turn Head Left"
-        case .capturingLeft: return "Turn Head Left"
-        case .promptRight: return "Turn Head Right"
-        case .capturingRight: return "Turn Head Right"
-        case .promptUp: return "Look Up"
-        case .capturingUp: return "Look Up"
-        case .promptDown: return "Look Down"
-        case .capturingDown: return "Look Down"
-        case .promptCloser: return "Move Phone Closer"
-        case .capturingCloser: return "Move Phone Closer"
-        case .promptFurther: return "Move Phone Further Away"
-        case .capturingFurther: return "Move Phone Further Away"
+        case .promptCloser: return "Slowly move phone closer"
+        case .capturingCloserMovement: return "Capturing... Keep moving closer"
+        case .promptFurther: return "Slowly move phone further away"
+        case .capturingFurtherMovement: return "Capturing... Keep moving further away"
         case .calculatingThresholds: return "Calculating..."
         // No text for other states like notEnrolled, complete, failed, or during liveness test idle
         default: return nil
@@ -125,8 +113,7 @@ struct ContentView: View {
     /// Determines the color of the instruction text
     private var instructionTextColor: Color {
         switch cameraManager.enrollmentState {
-        case .capturingCenter, .capturingLeft, .capturingRight,
-             .capturingUp, .capturingDown, .capturingCloser, .capturingFurther:
+        case .capturingCenter, .capturingCloserMovement, .capturingFurtherMovement:
             return .green // Indicate active capture
         default:
             return .white // Default color for prompts/timer
@@ -410,12 +397,8 @@ struct ContentView: View {
     private func handleEnrollmentStateChange(newState: EnrollmentState) {
         // Clear results when enrollment starts or progresses
         if [.promptCenter, .capturingCenter,
-            .promptLeft, .capturingLeft,
-            .promptRight, .capturingRight,
-            .promptUp, .capturingUp,
-            .promptDown, .capturingDown,
-            .promptCloser, .capturingCloser,
-            .promptFurther, .capturingFurther,
+            .promptCloser, .capturingCloserMovement,
+            .promptFurther, .capturingFurtherMovement,
             .calculatingThresholds].contains(newState) {
             if testResult != nil || enrollmentOutcome != nil {
                  testResult = nil
